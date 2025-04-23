@@ -163,8 +163,8 @@ G_AI096_AI115_ECM025_CSE223/
 
 The project can be run using the main.py script with the following options:
 
-```
-python main.py --phase [0-4] --data_path [path_to_data]
+```sh
+python3 main.py --phase [0-4] --data_path [path_to_data]
 ```
 
 Where:
@@ -177,8 +177,17 @@ Where:
 
 Required packages are listed in requirements.txt and can be installed with:
 
-```
+```sh
 pip install -r requirements.txt
+```
+
+It is recommended that you use a venv when installing the requirements like so:
+
+```sh
+python3 -m venv venv
+source venv/bin/activate
+
+# or equivalent code block
 ```
 
 ## Contributors
