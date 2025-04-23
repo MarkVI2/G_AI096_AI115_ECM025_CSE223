@@ -1,0 +1,95 @@
+p3-project/
+│
+├── Code/
+│   ├── config/
+│   │   ├── __init__.py
+│   │   ├── settings.py               # Global configuration parameters
+│   │   └── hyperparameters.py        # Model hyperparameters
+│   │
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── loader.py                 # Data loading utilities for CMAPSS dataset
+│   │   ├── preprocessor.py           # Data cleaning and preprocessing
+│   │   └── splitter.py               # Train/test/validation splitting
+│   │
+│   ├── features/
+│   │   ├── __init__.py
+│   │   ├── time_series.py            # Time series feature extraction
+│   │   ├── statistical.py            # Statistical feature generation
+│   │   ├── engineering.py            # Domain-specific feature engineering
+│   │   └── selector.py               # Feature selection techniques
+│   │
+│   ├── clustering/
+│   │   ├── __init__.py
+│   │   ├── dbscan.py                 # DBSCAN implementation
+│   │   ├── spectral.py               # Spectral clustering implementation
+│   │   ├── ensemble.py               # Ensemble clustering methods
+│   │   └── stage_mapper.py           # Maps clusters to degradation stages
+│   │
+│   ├── classification/
+│   │   ├── __init__.py
+│   │   ├── base_models.py            # Individual classifier implementations
+│   │   ├── meta_classifier.py        # Stacking/ensemble classifier
+│   │   ├── online_learning.py        # Incremental learning components
+│   │   └── evaluator.py              # Classification metrics and evaluation
+│   │
+│   ├── regression/
+│   │   ├── __init__.py
+│   │   ├── base_models.py            # Individual regressor implementations
+│   │   ├── ensemble_regressor.py     # Combined regression approach
+│   │   ├── quantile.py               # Quantile regression for uncertainty
+│   │   └── evaluator.py              # Regression metrics and evaluation
+│   │
+│   ├── risk/
+│   │   ├── __init__.py
+│   │   ├── scoring.py                # Risk score computation
+│   │   ├── thresholds.py             # Decision thresholds for maintenance
+│   │   └── calibration.py            # Calibration of probability estimates
+│   │
+│   ├── visualization/
+│   │   ├── __init__.py
+│   │   ├── clusters.py               # Cluster visualization with PCA/t-SNE
+│   │   ├── degradation.py            # Degradation stage visualization
+│   │   ├── predictions.py            # Model prediction visualizations
+│   │   └── risk_dashboard.py         # Risk score dashboard/plots
+│   │
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   ├── metrics.py                # Custom evaluation metrics
+│   │   ├── validators.py             # Input validation utilities
+│   │   └── logger.py                 # Logging configuration
+│   │
+│   ├── pipelines/
+│   │   ├── __init__.py
+│   │   ├── clustering_pipeline.py    # Phase 1 pipeline
+│   │   ├── classification_pipeline.py # Phase 2 pipeline
+│   │   ├── regression_pipeline.py    # Phase 3 pipeline
+│   │   └── risk_pipeline.py          # Phase 4 pipeline
+│   │
+│   ├── main.py                       # Main entry point
+│   ├── requirements.txt              # Package dependencies
+│   └── GroupNumber_code.ipynb        # Complete workflow notebook
+│
+├── Report/
+│   ├── GroupNumber_report.pdf
+│   ├── GroupNumber_report_source.docx
+│   └── README.md                     # Contribution breakdown
+│
+├── README.md                         # Project overview
+└── .gitignore                        # Git ignore file
+
+
+Data Flow:
+data/loader → data/preprocessor → data/splitter → features/* → models
+
+Clustering Pipeline:
+pipelines/clustering_pipeline → clustering/dbscan + clustering/spectral → clustering/ensemble → clustering/stage_mapper
+
+Classification Pipeline:
+pipelines/classification_pipeline → classification/base_models → classification/meta_classifier → classification/evaluator
+
+Regression Pipeline:
+pipelines/regression_pipeline → regression/base_models → regression/ensemble_regressor → regression/evaluator
+
+Risk Assessment Pipeline:
+pipelines/risk_pipeline → risk/scoring → risk/thresholds → visualization/risk_dashboard
