@@ -17,8 +17,7 @@ The implementation is divided into four distinct phases:
 ### Phase 1: Clustering for Multi-Stage Failure Labeling
 
 - Uses raw sensor data from the CMAPSS dataset (not using standard RUL labels)
-- Implements a hybrid clustering approach combining DBSCAN and Spectral
-  Clustering
+- Implements a Heirarchial Agglomerative Clustering
 - Visualizes clusters using PCA or t-SNE for validation
 - Derives 5 degradation stages:
   - Stage 0: Normal
