@@ -1,11 +1,8 @@
 import os
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns  # heatmap support
-from mpl_toolkits.mplot3d import Axes3D  # 3D plotting
+import time
 from typing import Dict, List, Optional
-from sklearn.manifold import TSNE
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.loader import CMAPSSDataLoader
@@ -13,15 +10,23 @@ from data.preprocessor import CMAPSSPreprocessor
 from clustering.hierarchical import (
     HierarchicalAgglomerativeClustering,
     map_clusters_to_degradation_stages,
-    visualize_clusters_tsne,
-    visualize_degradation_stages,
     analyze_stage_characteristics
 )
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
-import math
 from data.splitter import create_kfold_splits
-import time
- 
+from visualisation.clustering_viz import (
+    plot_engine_clusters,
+    plot_confusion_matrix_heatmap,
+    plot_3d_embedding,
+    plot_average_clusters,
+    plot_average_clusters_3d,
+    plot_metrics
+)
+from utils.clustering_metrics import (
+    calculate_performance_metrics,
+    evaluate_clustering_quality,
+    compute_average_metrics
+)
+
 class ClusteringPipeline:
     """
     Pipeline for clustering CMAPSS data using Hierarchical Agglomerative Clustering.
@@ -234,35 +239,17 @@ class ClusteringPipeline:
             
         # Get clustering results
         results = self.engine_clusters[engine_id]
-        X = results['data']
-        labels = results['labels']
-        time_cycles = results['time_cycles']
         stages = self.engine_stages[engine_id]
         
-        # Determine save path
-        save_path = None
-        if save_dir is not None:
-            os.makedirs(save_dir, exist_ok=True)
-            save_path = os.path.join(save_dir, f"engine_{engine_id}_clusters.png")
-            
-        # Visualize clusters
-        visualize_clusters_tsne(
-            X, labels, 
-            title=f'Hierarchical Clustering Results for Engine {engine_id} - t-SNE Visualization',
-            save_path=save_path
-        )
+        # Visualize with the extracted visualization function
+        plot_engine_clusters(engine_id, results, stages, save_dir)
         
-        # Determine save path for degradation visualization
-        deg_save_path = None
-        if save_dir is not None:
-            deg_save_path = os.path.join(save_dir, f"engine_{engine_id}_degradation.png")
-            
-        # Visualize degradation stages
-        visualize_degradation_stages(
-            X, stages, time_cycles,
-            title=f'Engine {engine_id} Degradation Stages - t-SNE Visualization',
-            save_path=deg_save_path
-        )
+        # Visualize confusion matrix
+        true_stages = self.create_rul_based_stages(self.n_clusters)[engine_id]
+        plot_confusion_matrix_heatmap(engine_id, true_stages, stages, save_dir)
+        
+        # Visualize 3D embedding
+        plot_3d_embedding(engine_id, results['data'], results['labels'], save_dir)
         
         return self
     
@@ -378,115 +365,8 @@ class ClusteringPipeline:
         if ground_truth is None:
             ground_truth = self.create_rul_based_stages(self.n_clusters)
             
-        metrics = {}
-        
-        for engine_id, predicted_stages in self.engine_stages.items():
-            if engine_id not in ground_truth:
-                if self.verbose:
-                    print(f"No ground truth found for engine {engine_id}, skipping")
-                continue
-                
-            true_stages = ground_truth[engine_id]
-            
-            # Ensure same length
-            min_len = min(len(true_stages), len(predicted_stages))
-            true_stages = true_stages[:min_len]
-            predicted_stages = predicted_stages[:min_len]
-            
-            # Calculate metrics
-            accuracy = accuracy_score(true_stages, predicted_stages)
-            precision, recall, f1, _ = precision_recall_fscore_support(
-                true_stages, predicted_stages, average='weighted'
-            )
-            
-            metrics[engine_id] = {
-                'accuracy': accuracy,
-                'precision': precision,
-                'recall': recall,
-                'f1': f1
-            }
-            
-        return metrics
-    
-    def calculate_gini_index(self, clusters: np.ndarray, rul_ranges: np.ndarray) -> float:
-        """
-        Calculate Gini impurity index for clustering compared to RUL ranges.
-        Lower Gini index indicates better clustering alignment with RUL ranges.
-        
-        Args:
-            clusters: Cluster assignments
-            rul_ranges: RUL-based stage assignments
-            
-        Returns:
-            Gini impurity index
-        """
-        # Get unique clusters
-        unique_clusters = np.unique(clusters)
-        
-        # Calculate Gini index
-        gini_sum = 0.0
-        total_samples = len(clusters)
-        
-        for cluster in unique_clusters:
-            # Get samples in this cluster
-            cluster_mask = clusters == cluster
-            cluster_samples = clusters[cluster_mask]
-            
-            if len(cluster_samples) == 0:
-                continue
-                
-            # Calculate proportion of each RUL range in this cluster
-            cluster_gini = 1.0
-            
-            for rul_range in np.unique(rul_ranges):
-                proportion = np.sum((rul_ranges[cluster_mask] == rul_range)) / len(cluster_samples)
-                cluster_gini -= proportion ** 2
-            
-            # Weight by cluster size
-            gini_sum += cluster_gini * (len(cluster_samples) / total_samples)
-        
-        return gini_sum
-    
-    def calculate_entropy(self, clusters: np.ndarray, rul_ranges: np.ndarray) -> float:
-        """
-        Calculate Shannon entropy for clustering compared to RUL ranges.
-        Lower entropy indicates better clustering alignment with RUL ranges.
-        
-        Args:
-            clusters: Cluster assignments
-            rul_ranges: RUL-based stage assignments
-            
-        Returns:
-            Shannon entropy
-        """
-        # Get unique clusters
-        unique_clusters = np.unique(clusters)
-        
-        # Calculate entropy
-        entropy_sum = 0.0
-        total_samples = len(clusters)
-        
-        for cluster in unique_clusters:
-            # Get samples in this cluster
-            cluster_mask = clusters == cluster
-            cluster_samples = clusters[cluster_mask]
-            
-            if len(cluster_samples) == 0:
-                continue
-                
-            # Calculate entropy for this cluster
-            cluster_entropy = 0.0
-            
-            for rul_range in np.unique(rul_ranges):
-                count = np.sum((rul_ranges[cluster_mask] == rul_range))
-                if count > 0:
-                    proportion = count / len(cluster_samples)
-                    cluster_entropy -= proportion * math.log2(proportion)
-            
-            # Weight by cluster size
-            entropy_sum += cluster_entropy * (len(cluster_samples) / total_samples)
-        
-        return entropy_sum
+        # Use the extracted metric function
+        return calculate_performance_metrics(self.engine_stages, ground_truth)
     
     def evaluate_clustering_quality(self) -> Dict[int, Dict[str, float]]:
         """
@@ -501,47 +381,8 @@ class ClusteringPipeline:
         # Create RUL-based stages
         rul_stages = self.create_rul_based_stages(self.n_clusters)
         
-        quality_metrics = {}
-        
-        for engine_id, predicted_stages in self.engine_stages.items():
-            if engine_id not in rul_stages:
-                if self.verbose:
-                    print(f"No RUL stages found for engine {engine_id}, skipping")
-                continue
-                
-            true_stages = rul_stages[engine_id]
-            
-            # Ensure same length
-            min_len = min(len(true_stages), len(predicted_stages))
-            true_stages = true_stages[:min_len]
-            predicted_stages = predicted_stages[:min_len]
-            
-            # Calculate metrics
-            gini = self.calculate_gini_index(predicted_stages, true_stages)
-            entropy = self.calculate_entropy(predicted_stages, true_stages)
-            
-            # Calculate confusion matrix
-            cm = confusion_matrix(true_stages, predicted_stages)
-            
-            # Normalize confusion matrix by row (true labels)
-            cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-            
-            # Calculate purity and inverse purity
-            purity = np.sum(np.max(cm, axis=0)) / np.sum(cm)
-            inverse_purity = np.sum(np.max(cm, axis=1)) / np.sum(cm)
-            
-            # Calculate F-measure (harmonic mean of purity and inverse purity)
-            f_measure = 2 * (purity * inverse_purity) / (purity + inverse_purity) if (purity + inverse_purity) > 0 else 0
-            
-            quality_metrics[engine_id] = {
-                'gini_index': gini,
-                'entropy': entropy,
-                'purity': purity,
-                'inverse_purity': inverse_purity,
-                'f_measure': f_measure
-            }
-            
-        return quality_metrics
+        # Use the extracted utility function
+        return evaluate_clustering_quality(self.engine_stages, rul_stages)
     
     def visualize_metrics(self, save_dir: Optional[str] = None) -> 'ClusteringPipeline':
         """
@@ -549,36 +390,15 @@ class ClusteringPipeline:
         """
         # Calculate metrics
         perf = self.calculate_performance_metrics()
-        quality = self.evaluate_clustering_quality()
-        # Plot performance metrics
+        qual = self.evaluate_clustering_quality()
+        
+        # Create DataFrames for visualization
         perf_df = pd.DataFrame.from_dict(perf, orient='index')
-        plt.figure(figsize=(10, 5))
-        perf_df.plot(kind='bar')
-        plt.title('Performance Metrics by Engine')
-        plt.tight_layout()
-        if save_dir:
-            os.makedirs(save_dir, exist_ok=True)
-            perf_path = os.path.join(save_dir, f'performance_metrics_plot_{self.dataset_id}.png')
-            plt.savefig(perf_path, dpi=300)
-            if self.verbose:
-                print(f"Saved performance metrics plot to {perf_path}")
-        else:
-            plt.show()
-        plt.close()
-        # Plot quality metrics
-        qual_df = pd.DataFrame.from_dict(quality, orient='index')
-        plt.figure(figsize=(10, 5))
-        qual_df.plot(kind='bar')
-        plt.title('Quality Metrics by Engine')
-        plt.tight_layout()
-        if save_dir:
-            qual_path = os.path.join(save_dir, f'quality_metrics_plot_{self.dataset_id}.png')
-            plt.savefig(qual_path, dpi=300)
-            if self.verbose:
-                print(f"Saved quality metrics plot to {qual_path}")
-        else:
-            plt.show()
-        plt.close()
+        qual_df = pd.DataFrame.from_dict(qual, orient='index')
+        
+        # Use the extracted plotting function
+        plot_metrics(perf_df, qual_df, self.dataset_id, save_dir)
+        
         return self
     
     def compute_average_metrics(self) -> Dict[str, Dict[str, float]]:
@@ -587,19 +407,9 @@ class ClusteringPipeline:
         """
         perf = self.calculate_performance_metrics()
         qual = self.evaluate_clustering_quality()
-        # average performance
-        avg_perf = {}
-        if perf:
-            keys = next(iter(perf.values())).keys()
-            for k in keys:
-                avg_perf[k] = np.mean([v[k] for v in perf.values()])
-        # average quality
-        avg_qual = {}
-        if qual:
-            keys = next(iter(qual.values())).keys()
-            for k in keys:
-                avg_qual[k] = np.mean([v[k] for v in qual.values()])
-        return {'average_performance': avg_perf, 'average_quality': avg_qual}
+        
+        # Use the extracted utility function
+        return compute_average_metrics(perf, qual)
 
     def visualize_average_clusters(self, save_dir: Optional[str] = None) -> 'ClusteringPipeline':
         """
@@ -608,28 +418,14 @@ class ClusteringPipeline:
         # Combine data across engines
         X_all = np.vstack([info['data'] for info in self.engine_clusters.values()])
         labels = np.hstack([self.engine_stages[e] for e in self.engine_clusters.keys()])
-        # ground truth RUL stages
-        rul_all = np.hstack([self.create_rul_based_stages(self.n_clusters)[e] for e in self.engine_clusters.keys()])
-        # compute t-SNE embedding
-        tsne_embed = TSNE(n_components=2, random_state=0).fit_transform(X_all)
-        # plot
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-        # clusters
-        scatter1 = ax1.scatter(tsne_embed[:,0], tsne_embed[:,1], c=labels, cmap='viridis', s=5)
-        ax1.set_title('Aggregated t-SNE: Cluster Labels')
-        # RUL stages
-        scatter2 = ax2.scatter(tsne_embed[:,0], tsne_embed[:,1], c=rul_all, cmap='plasma', s=5)
-        ax2.set_title('Aggregated t-SNE: RUL-based Stages')
-        plt.tight_layout()
-        if save_dir:
-            os.makedirs(save_dir, exist_ok=True)
-            path = os.path.join(save_dir, f'average_clusters_{self.dataset_id}.png')
-            fig.savefig(path, dpi=300)
-            if self.verbose:
-                print(f"Saved aggregated cluster plot to {path}")
-        else:
-            plt.show()
-        plt.close(fig)
+        
+        # Get ground truth RUL stages
+        rul_all = np.hstack([self.create_rul_based_stages(self.n_clusters)[e] 
+                            for e in self.engine_clusters.keys()])
+        
+        # Use the extracted visualization function
+        plot_average_clusters(X_all, labels, rul_all, self.dataset_id, save_dir)
+        
         return self
     
     def visualize_confusion_matrix_heatmap(self, engine_id: int, save_dir: Optional[str] = None) -> 'ClusteringPipeline':
@@ -638,26 +434,14 @@ class ClusteringPipeline:
         """
         if engine_id not in self.engine_stages:
             raise ValueError(f"No clustering results for engine {engine_id}")
-        # True and predicted
-        true = self.create_rul_based_stages(self.n_clusters)[engine_id]
-        pred = self.engine_stages[engine_id]
-        # align lengths
-        n = min(len(true), len(pred))
-        cm = confusion_matrix(true[:n], pred[:n])
-        # plot
-        plt.figure(figsize=(6, 5))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
-        plt.xlabel('Predicted Stage')
-        plt.ylabel('True RUL Stage')
-        plt.title(f'Engine {engine_id} Confusion Matrix Heatmap')
-        if save_dir:
-            os.makedirs(save_dir, exist_ok=True)
-            path = os.path.join(save_dir, f'engine_{engine_id}_cm_heatmap.png')
-            plt.savefig(path, dpi=300, bbox_inches='tight')
-            if self.verbose: print(f"Saved confusion matrix heatmap to {path}")
-        else:
-            plt.show()
-        plt.close()
+            
+        # Get true and predicted stages
+        true_stages = self.create_rul_based_stages(self.n_clusters)[engine_id]
+        predicted_stages = self.engine_stages[engine_id]
+        
+        # Use the extracted visualization function
+        plot_confusion_matrix_heatmap(engine_id, true_stages, predicted_stages, save_dir)
+        
         return self
 
     def visualize_3d_embedding(self, engine_id: int, save_dir: Optional[str] = None) -> 'ClusteringPipeline':
@@ -666,47 +450,27 @@ class ClusteringPipeline:
         """
         if engine_id not in self.engine_clusters:
             raise ValueError(f"No clustering results for engine {engine_id}")
+            
         info = self.engine_clusters[engine_id]
         X = info['data']
         labels = info['labels']
-        # 3D t-SNE
-        embed3d = TSNE(n_components=3, random_state=0).fit_transform(X)
-        fig = plt.figure(figsize=(8, 6))
-        ax = fig.add_subplot(111, projection='3d')
-        scatter = ax.scatter(embed3d[:,0], embed3d[:,1], embed3d[:,2], c=labels, cmap='viridis', s=5)
-        ax.set_title(f'Engine {engine_id} 3D t-SNE Clusters')
-        ax.set_xlabel('Dim 1'); ax.set_ylabel('Dim 2'); ax.set_zlabel('Dim 3')
-        if save_dir:
-            os.makedirs(save_dir, exist_ok=True)
-            path = os.path.join(save_dir, f'engine_{engine_id}_3d_tsne.png')
-            plt.savefig(path, dpi=300, bbox_inches='tight')
-            if self.verbose: print(f"Saved 3D t-SNE embedding to {path}")
-        else:
-            plt.show()
-        plt.close(fig)
+        
+        # Use the extracted visualization function
+        plot_3d_embedding(engine_id, X, labels, save_dir)
+        
         return self
     
     def visualize_average_clusters_3d(self, save_dir: Optional[str] = None) -> 'ClusteringPipeline':
         """
         Create a 3D t-SNE embedding for all engines combined, colored by cluster labels.
         """
-        # Combine
+        # Combine data across engines
         X_all = np.vstack([info['data'] for info in self.engine_clusters.values()])
         labels = np.hstack([self.engine_stages[e] for e in self.engine_clusters.keys()])
-        embed3d = TSNE(n_components=3, random_state=0).fit_transform(X_all)
-        fig = plt.figure(figsize=(8, 6))
-        ax = fig.add_subplot(111, projection='3d')
-        scatter = ax.scatter(embed3d[:,0], embed3d[:,1], embed3d[:,2], c=labels, cmap='viridis', s=5)
-        ax.set_title(f'Aggregated 3D t-SNE Clusters ({self.dataset_id})')
-        ax.set_xlabel('Dim 1'); ax.set_ylabel('Dim 2'); ax.set_zlabel('Dim 3')
-        if save_dir:
-            os.makedirs(save_dir, exist_ok=True)
-            path = os.path.join(save_dir, f'average_clusters_3d_{self.dataset_id}.png')
-            plt.savefig(path, dpi=300, bbox_inches='tight')
-            if self.verbose: print(f"Saved averaged 3D cluster plot to {path}")
-        else:
-            plt.show()
-        plt.close(fig)
+        
+        # Use the extracted visualization function
+        plot_average_clusters_3d(X_all, labels, self.dataset_id, save_dir)
+        
         return self
     
     def run_cross_validation(self, n_splits: int = 5) -> List[Dict]:
@@ -808,18 +572,6 @@ def main():
         avg_df.to_csv(os.path.join(ds_output, f"average_metrics_{ds}.csv"))
         # Visualizations
         pipeline.visualize_all_engines(save_dir=ds_output)
-        # Per-engine confusion heatmaps and 3D embeddings
-        for engine_id in pipeline.engine_stages.keys():
-            try:
-                pipeline.visualize_confusion_matrix_heatmap(engine_id, save_dir=ds_output)
-            except Exception as e:
-                if pipeline.verbose:
-                    print(f"Warning: heatmap failed for engine {engine_id}: {e}")
-            try:
-                pipeline.visualize_3d_embedding(engine_id, save_dir=ds_output)
-            except Exception as e:
-                if pipeline.verbose:
-                    print(f"Warning: 3D embedding failed for engine {engine_id}: {e}")
         pipeline.visualize_average_clusters(save_dir=ds_output)
         # Aggregated 3D t-SNE over all engines
         pipeline.visualize_average_clusters_3d(save_dir=ds_output)
