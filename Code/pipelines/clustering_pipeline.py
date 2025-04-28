@@ -4,7 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns  # heatmap support
 from mpl_toolkits.mplot3d import Axes3D  # 3D plotting
-from typing import Dict, List, Tuple, Optional, Union
+from typing import Dict, List, Optional
 from sklearn.manifold import TSNE
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -266,13 +266,14 @@ class ClusteringPipeline:
         
         return self
     
-    def visualize_all_engines(self, engines: Optional[List[int]] = None, save_dir: Optional[str] = None):
+    def visualize_all_engines(self, engines: Optional[List[int]] = None, save_dir: Optional[str] = None, interval: int = 10):
         """
         Visualize clustering results for multiple engines.
         
         Args:
             engines: List of engine unit numbers to visualize (if None, use all engines)
             save_dir: Directory to save visualizations (if None, display instead)
+            interval: Interval step for engines to visualize (e.g., 10 for every 10th engine)
         """
         if not self.engine_clusters:
             raise ValueError("No clustering results found. Run run_clustering() first.")
@@ -280,10 +281,12 @@ class ClusteringPipeline:
         # Determine which engines to visualize
         if engines is None:
             engines = sorted(self.engine_clusters.keys())
-            
+        # Select every nth engine
+        engines = engines[::interval]
+         
         for engine_id in engines:
             self.visualize_engine_clusters(engine_id, save_dir)
-            
+         
         return self
     
     def get_stage_profiles(self):

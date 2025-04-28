@@ -6,7 +6,7 @@ import time
 import sys
 import random
 from collections import defaultdict
-from .visualization import compute_tsne, visualize_clusters_tsne, visualize_degradation_stages
+from .visualization import visualize_clusters_tsne, visualize_degradation_stages
 
 class HierarchicalAgglomerativeClustering:
     """
