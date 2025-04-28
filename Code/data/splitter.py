@@ -3,32 +3,22 @@ from sklearn.model_selection import train_test_split, KFold, TimeSeriesSplit
 
 def create_validation_split(train_data, val_size=0.2, random_state=42):
     """
-    Creates a validation set from training data
-    
-    Parameters:
-    -----------
-    train_data : DataFrame
-        Training data
-    val_size : float
-        Proportion of training data to use for validation
-    random_state : int
-        Random seed for reproducibility
-        
-    Returns:
-    --------
-    tuple : (train_subset, validation_set)
+    Create a validation set from training data using time-based split per engine unit.
+    Splits the last val_size fraction of cycles for each engine as validation.
     """
-    engine_ids = train_data['unit_number'].unique()
-    
-    train_ids, val_ids = train_test_split(
-        engine_ids, 
-        test_size=val_size, 
-        random_state=random_state
-    )
-
-    train_subset = train_data[train_data['unit_number'].isin(train_ids)]
-    validation_set = train_data[train_data['unit_number'].isin(val_ids)]
-    
+    train_indices = []
+    val_indices = []
+    # Split each engine's cycles: last fraction as validation
+    for unit in train_data['unit_number'].unique():
+        unit_df = train_data[train_data['unit_number'] == unit].sort_values('time_cycles')
+        n = len(unit_df)
+        split_at = int(n * (1 - val_size))
+        indices = unit_df.index.tolist()
+        train_indices.extend(indices[:split_at])
+        val_indices.extend(indices[split_at:])
+    train_subset = train_data.loc[train_indices]
+    validation_set = train_data.loc[val_indices]
+     
     return train_subset, validation_set
 
 def create_kfold_splits(train_data, n_splits=5, random_state=42):

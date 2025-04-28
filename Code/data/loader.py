@@ -13,13 +13,8 @@ class CMAPSSDataLoader:
     # Column names based on the dataset description
     _column_names = [
         'unit_number', 'time_cycles',
-        'setting_1', 'setting_2', 'setting_3',
-        'sensor_1', 'sensor_2', 'sensor_3', 'sensor_4', 'sensor_5',
-        'sensor_6', 'sensor_7', 'sensor_8', 'sensor_9', 'sensor_10',
-        'sensor_11', 'sensor_12', 'sensor_13', 'sensor_14', 'sensor_15',
-        'sensor_16', 'sensor_17', 'sensor_18', 'sensor_19', 'sensor_20',
-        'sensor_21'
-    ]
+        'setting_1', 'setting_2', 'setting_3'
+    ] + [f'sensor_{i}' for i in range(1, 27)]
     
     # Dataset information
     _dataset_info = {
@@ -86,26 +81,16 @@ class CMAPSSDataLoader:
     def _load_data_file(self, file_path: str) -> pd.DataFrame:
         """
         Load a CMAPSS data file (train or test) into a pandas DataFrame.
-        
-        Args:
-            file_path: Path to the data file
-            
-        Returns:
-            DataFrame with named columns
         """
         # Load the data with whitespace delimiter
         df = pd.read_csv(file_path, delimiter=r'\s+', header=None)
-        
-        # Assign column names
-        if len(df.columns) == len(self._column_names):
-            df.columns = self._column_names
-        else:
-            # Handle case where there might be a different number of columns
-            # Some datasets might include all 26 columns mentioned in the readme
-            base_columns = self._column_names
-            extra_columns = [f"sensor_{i}" for i in range(22, df.shape[1] - 5 + 1)]
-            df.columns = base_columns + extra_columns
-        
+        # Dynamically assign column names to include all sensor measurements
+        total_cols = df.shape[1]
+        if total_cols < 6:
+            raise ValueError(f"Unexpected number of columns: {total_cols}")
+        num_sensors = total_cols - 5
+        column_names = ['unit_number', 'time_cycles', 'setting_1', 'setting_2', 'setting_3'] + [f'sensor_{i}' for i in range(1, num_sensors + 1)]
+        df.columns = column_names
         return df
     
     def _load_rul_file(self, file_path: str) -> pd.DataFrame:
