@@ -159,15 +159,11 @@ class ClusteringPipeline:
         if engines is None:
             engines = sorted(data['unit_number'].unique())
         
-        # Select features for clustering: raw sensors, engineered diffs, rolling stats, cycle features
+        # Select features for clustering: raw sensors only
         sensor_cols = [col for col in data.columns if col.startswith('sensor_')]
-        diff_cols = [col for col in data.columns if col.endswith('_diff')]
-        roll_cols = [col for col in data.columns if 'roll_mean' in col or 'roll_std' in col]
-        cycle_cols = [col for col in ['cycle_ratio', 'remaining_cycles'] if col in data.columns]
-        feature_cols = sensor_cols + diff_cols + roll_cols + cycle_cols
+        feature_cols = sensor_cols
         if self.verbose:
-            print(f"Using {len(feature_cols)} features for clustering: {len(sensor_cols)} sensors, "
-                  f"{len(diff_cols)} diffs, {len(roll_cols)} rolling, {len(cycle_cols)} cycle features")
+            print(f"Using {len(feature_cols)} raw sensor features for clustering")
 
         if self.verbose:
             print(f"Running clustering for {len(engines)} engines using {len(feature_cols)} features")
@@ -252,9 +248,19 @@ class ClusteringPipeline:
         # Visualize 3D embedding
         plot_3d_embedding(engine_id, results['data'], results['labels'], save_dir)
         
+        # Sensor trend plot by degradation stage (e.g., vibration = sensor_3)
+        from visualisation.clustering_viz import plot_sensor_trends_by_stage
+        plot_sensor_trends_by_stage(
+            engine_id,
+            results['engine_data'],
+            stages,
+            sensor_col='sensor_3',
+            save_dir=save_dir
+        )
+        
         return self
     
-    def visualize_all_engines(self, engines: Optional[List[int]] = None, save_dir: Optional[str] = None, interval: int = 10):
+    def visualize_all_engines(self, engines: Optional[List[int]] = None, save_dir: Optional[str] = None, interval: int = 50):
         """
         Visualize clustering results for multiple engines.
         

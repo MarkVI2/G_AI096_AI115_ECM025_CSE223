@@ -240,3 +240,36 @@ def plot_metrics(perf_df: pd.DataFrame, qual_df: pd.DataFrame,
         plt.show()
     
     plt.close()
+
+
+def plot_sensor_trends_by_stage(
+    engine_id: int,
+    engine_data: pd.DataFrame,
+    stages: np.ndarray,
+    sensor_col: str,
+    save_dir: Optional[str] = None
+):
+    """
+    Plot time_cycles vs. a single sensor reading, colored by degradation stage.
+    """
+    df = engine_data.copy()
+    df['stage'] = stages
+    plt.figure(figsize=(8, 4))
+    for stg in sorted(df['stage'].unique()):
+        grp = df[df['stage'] == stg]
+        avg = grp.groupby('time_cycles')[sensor_col].mean()
+        plt.plot(avg.index, avg.values, label=f"Stage {stg}")
+    plt.xlabel('Time Cycle')
+    plt.ylabel(sensor_col)
+    plt.title(f'Engine {engine_id}: {sensor_col} trend by Stage')
+    plt.legend()
+    plt.tight_layout()
+
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        path = os.path.join(save_dir, f"engine_{engine_id}_{sensor_col}_by_stage.png")
+        plt.savefig(path, dpi=300, bbox_inches='tight')
+        print(f"Saved sensor trend plot to {path}")
+    else:
+        plt.show()
+    plt.close()
