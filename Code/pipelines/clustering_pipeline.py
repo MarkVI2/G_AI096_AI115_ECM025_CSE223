@@ -4,6 +4,7 @@ import pandas as pd
 import time
 from typing import Dict, List, Optional
 import sys
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.loader import CMAPSSDataLoader
 from data.preprocessor import CMAPSSPreprocessor
@@ -545,6 +546,8 @@ def main():
     dataset_ids = ["FD001", "FD002", "FD003", "FD004"]
     for ds in dataset_ids:
         ds_output = os.path.join(output_dir, ds)
+        # Ensure base output directory exists
+        os.makedirs(output_dir, exist_ok=True)
         os.makedirs(ds_output, exist_ok=True)
         pipeline = ClusteringPipeline(
             data_dir=data_dir,

@@ -35,7 +35,7 @@ def visualize_degradation_stages(X: np.ndarray, stages: np.ndarray, time_cycles:
     X_tsne = compute_tsne(X)
     plt.figure(figsize=(8, 6))
     for t, s in zip(X_tsne, stages):
-        plt.scatter(t[0], t[1], c=plt.cm.viridis(s / np.max(stages)), s=5)
+        plt.scatter(t[0], t[1], color=plt.cm.viridis(s / np.max(stages)), s=5)
     if title:
         plt.title(title)
     if save_path:
