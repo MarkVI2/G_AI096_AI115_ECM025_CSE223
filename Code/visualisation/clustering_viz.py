@@ -18,8 +18,8 @@ def plot_engine_clusters(engine_id: int, results: Dict, stages: np.ndarray, save
         stages: Degradation stages array
         save_dir: Directory to save visualizations (if None, display instead)
     """
-    from ..clustering.visualization import visualize_clusters_tsne, visualize_degradation_stages
-    
+    from clustering.visualization import visualize_clusters_tsne, visualize_degradation_stages
+
     X = results['data']
     labels = results['labels']
     time_cycles = results['time_cycles']
