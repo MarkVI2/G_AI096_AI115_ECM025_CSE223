@@ -4,6 +4,7 @@ import pandas as pd
 import time
 from typing import Dict, List, Optional
 import sys
+from joblib import Parallel, delayed
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.loader import CMAPSSDataLoader
@@ -44,6 +45,7 @@ class ClusteringPipeline:
                 n_clusters: int = 5, linkage: str = 'ward',
                 distance_metric: str = 'euclidean',
                 normalization_method: str = 'minmax',
+                scale_per_unit: bool = False,
                 verbose: bool = False):
         """
         Initialize the clustering pipeline.
@@ -55,6 +57,7 @@ class ClusteringPipeline:
             linkage: Linkage criterion to use ('single', 'complete', 'average', 'ward')
             distance_metric: Distance metric to use ('euclidean', 'manhattan', 'cosine')
             normalization_method: Method for normalizing data ('minmax', 'standard', 'robust', 'none')
+            scale_per_unit: Whether to apply scaling per engine unit
             verbose: Whether to print progress information
         """
         self.data_dir = data_dir
@@ -67,7 +70,12 @@ class ClusteringPipeline:
         
         # Initialize components
         self.loader = CMAPSSDataLoader(data_dir)
-        self.preprocessor = CMAPSSPreprocessor(normalization_method=normalization_method)
+        self.scale_per_unit = scale_per_unit
+        # Initialize preprocessor with optional per-unit scaling
+        self.preprocessor = CMAPSSPreprocessor(
+            normalization_method=normalization_method,
+            scale_per_unit=self.scale_per_unit
+        )
         
         # Storage for results
         self.data = None
@@ -159,63 +167,55 @@ class ClusteringPipeline:
         if engines is None:
             engines = sorted(data['unit_number'].unique())
         
-        # Select features for clustering: raw sensors only
+        # Select features for clustering: include time cycles and raw sensors for time series info
         sensor_cols = [col for col in data.columns if col.startswith('sensor_')]
-        feature_cols = sensor_cols
+        feature_cols = ['time_cycles'] + sensor_cols
         if self.verbose:
-            print(f"Using {len(feature_cols)} raw sensor features for clustering")
+            print(f"Using {len(feature_cols)} features (including time_cycles and raw sensors) for clustering")
 
         if self.verbose:
             print(f"Running clustering for {len(engines)} engines using {len(feature_cols)} features")
             print(f"Clustering settings: method=HAC, linkage={self.linkage}, distance={self.distance_metric}")
             
         start_time = time.time()
-        
-        # Process each engine
-        for engine_id in engines:
-            if self.verbose:
-                print(f"  Processing engine {engine_id}...")
-                
-            # Extract data for this engine
-            engine_data = data[data['unit_number'] == engine_id]
-            
-            # Skip if not enough data
+        # Parallel processing of engines
+        def _process(eid):
+            engine_data = data[data['unit_number'] == eid]
             if len(engine_data) < self.n_clusters:
-                print(f"  WARNING: Engine {engine_id} has only {len(engine_data)} samples, skipping")
-                continue
-                
-            # Get sensor data and time cycles
-            X = engine_data[feature_cols].values
-            time_cycles = engine_data['time_cycles'].values
-            
-            # Create and fit clustering model
-            hac = HierarchicalAgglomerativeClustering(
+                return None
+            X_e = engine_data[feature_cols].values
+            # Debug: Show scaling stats for first engine in verbose mode
+            if self.verbose:
+                mins = X_e.min(axis=0)
+                maxs = X_e.max(axis=0)
+                means = X_e.mean(axis=0)
+                stds = X_e.std(axis=0)
+                print(f"Engine {eid} feature stats: min={mins[:3]}, max={maxs[:3]}, mean={means[:3]}, std={stds[:3]}")
+            tc_e = engine_data['time_cycles'].values
+            model = HierarchicalAgglomerativeClustering(
                 n_clusters=self.n_clusters,
                 linkage=self.linkage,
                 distance_metric=self.distance_metric,
                 verbose=self.verbose
             )
-            
-            # Run clustering
-            cluster_labels = hac.fit_predict(X)
-            
-            # Map clusters to degradation stages
-            degradation_stages = map_clusters_to_degradation_stages(cluster_labels, time_cycles)
-            
-            # Store results
-            self.engine_clusters[engine_id] = {
-                'model': hac,
-                'labels': cluster_labels,
-                'data': X,
-                'time_cycles': time_cycles,
-                'engine_data': engine_data
+            labels_e = model.fit_predict(X_e)
+            stages_e = map_clusters_to_degradation_stages(labels_e, tc_e)
+            stats_e = analyze_stage_characteristics(X_e, stages_e, feature_cols)
+            return eid, model, labels_e, stages_e, stats_e, engine_data, tc_e, X_e
+        results = Parallel(n_jobs=-1)(delayed(_process)(eid) for eid in engines)
+        for item in results:
+            if item is None:
+                continue
+            eid, model, labels_e, stages_e, stats_e, edata, tc_e, X_e = item
+            self.engine_clusters[eid] = {
+                'model': model,
+                'labels': labels_e,
+                'data': X_e,
+                'time_cycles': tc_e,
+                'engine_data': edata
             }
-            
-            self.engine_stages[engine_id] = degradation_stages
-            
-            # Analyze stage characteristics
-            stage_stats = analyze_stage_characteristics(X, degradation_stages, feature_cols)
-            self.cluster_analysis[engine_id] = stage_stats
+            self.engine_stages[eid] = stages_e
+            self.cluster_analysis[eid] = stats_e
             
         elapsed_time = time.time() - start_time
         if self.verbose:
@@ -260,7 +260,7 @@ class ClusteringPipeline:
         
         return self
     
-    def visualize_all_engines(self, engines: Optional[List[int]] = None, save_dir: Optional[str] = None, interval: int = 50):
+    def visualize_all_engines(self, engines: Optional[List[int]] = None, save_dir: Optional[str] = None, interval: int = 49):
         """
         Visualize clustering results for multiple engines.
         
@@ -567,7 +567,7 @@ def main():
         # Load and preprocess
         pipeline.load_data().preprocess_data()
         # Cross-validation
-        cv_results = pipeline.run_cross_validation(n_splits=5)
+        cv_results = pipeline.run_cross_validation(n_splits=10)
         cv_df = pd.DataFrame([{**{'fold': r['fold']}, **r['agg_performance'], **r['agg_quality']} for r in cv_results])
         cv_df.to_csv(os.path.join(ds_output, f"cv_results_{ds}.csv"), index=False)
         # Full engine clustering
@@ -593,6 +593,22 @@ def main():
         print(f"Completed dataset {ds}, results in {ds_output}")
     
     # End processing of all datasets
+
+def run_clustering(data_dir: str):
+    """
+    Convenience wrapper to run the clustering pipeline.
+    """
+    pipeline = ClusteringPipeline(
+        data_dir=data_dir,
+        n_clusters=5,
+        linkage='ward',
+        distance_metric='euclidean',
+        normalization_method='minmax',
+        scale_per_unit=False,
+        verbose=True
+    )
+    pipeline.load_data().preprocess_data().run_clustering()
+    return pipeline
 
 if __name__ == "__main__":
     main()

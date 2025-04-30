@@ -1,3 +1,5 @@
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import argparse
 from pipelines.clustering_pipeline import run_clustering
 from pipelines.classification_pipeline import run_classification
@@ -8,7 +10,7 @@ def main():
     parser = argparse.ArgumentParser(description='Run Predictive Maintenance Pipeline')
     parser.add_argument('--phase', type=int, choices=[0, 1, 2, 3, 4], default=0,
                         help='Pipeline phase to run (0=all, 1=clustering, 2=classification, 3=regression, 4=risk)')
-    parser.add_argument('--data_path', type=str, default='../CMAPSSData/',
+    parser.add_argument('--data_path', type=str, default='./Code/data/',
                         help='Path to CMAPSS dataset')
     args = parser.parse_args()
     

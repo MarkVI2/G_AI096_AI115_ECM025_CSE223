@@ -200,46 +200,46 @@ def plot_average_clusters_3d(X_all: np.ndarray, labels: np.ndarray,
 
 
 def plot_metrics(perf_df: pd.DataFrame, qual_df: pd.DataFrame, 
-                dataset_id: str, save_dir: Optional[str] = None):
+                 dataset_id: str, save_dir: Optional[str] = None):
     """
     Visualize performance and quality metrics across engines.
-    
-    Args:
-        perf_df: DataFrame of performance metrics
-        qual_df: DataFrame of quality metrics
-        dataset_id: Dataset identifier
-        save_dir: Directory to save the plots (if None, display instead)
     """
-    # Plot performance metrics
-    plt.figure(figsize=(10, 5))
-    perf_df.plot(kind='bar')
-    plt.title('Performance Metrics by Engine')
+    # Compute and plot average performance metrics
+    perf_mean = perf_df.mean()
+    fig, ax = plt.subplots(figsize=(8, 4))
+    perf_mean.plot(kind='bar', ax=ax, color='skyblue')
+    ax.set_title('Average Performance Metrics')
+    ax.set_xlabel('Metric')
+    ax.set_ylabel('Value')
     plt.tight_layout()
     
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
-        perf_path = os.path.join(save_dir, f'performance_metrics_plot_{dataset_id}.png')
+        perf_path = os.path.join(save_dir, f'avg_performance_metrics_{dataset_id}.png')
         plt.savefig(perf_path, dpi=300)
         print(f"Saved performance metrics plot to {perf_path}")
     else:
         plt.show()
     
-    plt.close()
-    
-    # Plot quality metrics
-    plt.figure(figsize=(10, 5))
-    qual_df.plot(kind='bar')
-    plt.title('Quality Metrics by Engine')
+    plt.close(fig)
+    # Compute and plot average quality metrics
+    qual_mean = qual_df.mean()
+    fig2, ax2 = plt.subplots(figsize=(8, 4))
+    qual_mean.plot(kind='bar', ax=ax2, color='salmon')
+    ax2.set_title('Average Quality Metrics')
+    ax2.set_xlabel('Metric')
+    ax2.set_ylabel('Value')
     plt.tight_layout()
     
     if save_dir:
-        qual_path = os.path.join(save_dir, f'quality_metrics_plot_{dataset_id}.png')
+        os.makedirs(save_dir, exist_ok=True)
+        qual_path = os.path.join(save_dir, f'avg_quality_metrics_{dataset_id}.png')
         plt.savefig(qual_path, dpi=300)
         print(f"Saved quality metrics plot to {qual_path}")
     else:
         plt.show()
     
-    plt.close()
+    plt.close(fig)
 
 
 def plot_sensor_trends_by_stage(
