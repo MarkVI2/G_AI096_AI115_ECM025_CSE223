@@ -28,10 +28,13 @@ The implementation is divided into four distinct phases:
 
 ### Phase 2: Classification Model
 
-- Uses the cluster-labeled data to train a meta-classifier framework
-- Employs XGBoost as the primary classifier, enhanced with ensemble techniques
-- Predicts the current degradation stage (0 to 4)
-- Provides probability estimates for each degradation stage
+- Uses the cluster‑labeled data (from Phase 1) as ground truth labels
+- Trains a meta‑classifier framework on engine data features
+- Employs XGBoost as the primary classifier, enhanced with ensemble stacking
+- Predicts the current degradation stage (0 to 4) for each time cycle
+- Outputs both class predictions and probability estimates per stage
+- Uses both training and test datasets (cluster labels on test set are generated
+  via the clustering pipeline) for training and evaluation
 
 ### Phase 3: Regression Model
 

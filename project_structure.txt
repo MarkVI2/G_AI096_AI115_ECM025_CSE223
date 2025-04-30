@@ -62,7 +62,7 @@ p3-project/
 │   ├── pipelines/
 │   │   ├── __init__.py
 │   │   ├── clustering_pipeline.py    # Phase 1 pipeline
-│   │   ├── classification_pipeline.py # Phase 2 pipeline
+│   │   ├── classification_pipeline.py # Phase 2 pipeline: trains XGBoost based meta-classifier using cluster labels
 │   │   ├── regression_pipeline.py    # Phase 3 pipeline
 │   │   └── risk_pipeline.py          # Phase 4 pipeline
 │   │

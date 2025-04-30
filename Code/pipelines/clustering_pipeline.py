@@ -46,7 +46,8 @@ class ClusteringPipeline:
                 distance_metric: str = 'euclidean',
                 normalization_method: str = 'minmax',
                 scale_per_unit: bool = False,
-                verbose: bool = False):
+                verbose: bool = False,
+                random_state: int = 42):
         """
         Initialize the clustering pipeline.
         
@@ -67,6 +68,9 @@ class ClusteringPipeline:
         self.distance_metric = distance_metric
         self.normalization_method = normalization_method
         self.verbose = verbose
+        # Reproducibility seed
+        self.random_state = random_state
+        np.random.seed(self.random_state)
         
         # Initialize components
         self.loader = CMAPSSDataLoader(data_dir)
@@ -125,13 +129,20 @@ class ClusteringPipeline:
             
         # Fit preprocessor on training data and transform
         train_data = self.data['train_with_rul']
-        self.preprocessed_data = {
-            'train': self.preprocessor.fit_transform(
-                train_data,
-                add_remaining_features=add_engineered_features,
-                add_sensor_diff=add_engineered_features
-            )
-        }
+        # Fit and transform training data
+        transformed_train = self.preprocessor.fit_transform(
+            train_data,
+            add_remaining_features=add_engineered_features,
+            add_sensor_diff=add_engineered_features
+        )
+        # Sub-sample ~60% from each engine (unit_number) for reproducible training split
+        sampled_train = (
+            transformed_train
+            .groupby('unit_number', group_keys=False)
+            .apply(lambda d: d.sample(frac=0.6, random_state=self.random_state))
+            .reset_index(drop=True)
+        )
+        self.preprocessed_data = {'train': sampled_train}
         
         # Transform test data
         test_data = self.data['test_with_rul']
@@ -167,11 +178,12 @@ class ClusteringPipeline:
         if engines is None:
             engines = sorted(data['unit_number'].unique())
         
-        # Select features for clustering: include time cycles and raw sensors for time series info
+        # Select features for clustering: include time_cycles, operational settings, and raw sensors
+        op_cols = [col for col in data.columns if col.startswith('setting_')]
         sensor_cols = [col for col in data.columns if col.startswith('sensor_')]
-        feature_cols = ['time_cycles'] + sensor_cols
+        feature_cols = ['time_cycles'] + op_cols + sensor_cols
         if self.verbose:
-            print(f"Using {len(feature_cols)} features (including time_cycles and raw sensors) for clustering")
+            print(f"Using {len(feature_cols)} features (time_cycles + settings + sensors) for clustering")
 
         if self.verbose:
             print(f"Running clustering for {len(engines)} engines using {len(feature_cols)} features")

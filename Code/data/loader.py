@@ -84,12 +84,17 @@ class CMAPSSDataLoader:
         """
         # Load the data with whitespace delimiter
         df = pd.read_csv(file_path, delimiter=r'\s+', header=None)
-        # Dynamically assign column names to include all sensor measurements
+        # Assign exactly 21 sensor columns; truncate extra if present
         total_cols = df.shape[1]
-        if total_cols < 6:
-            raise ValueError(f"Unexpected number of columns: {total_cols}")
-        num_sensors = total_cols - 5
-        column_names = ['unit_number', 'time_cycles', 'setting_1', 'setting_2', 'setting_3'] + [f'sensor_{i}' for i in range(1, num_sensors + 1)]
+        required_sensors = 21
+        required_cols = 5 + required_sensors
+        if total_cols < required_cols:
+            raise ValueError(f"Expected at least {required_sensors} sensors (total columns {required_cols}), got {total_cols}")
+        # Truncate any extra sensor readings beyond 21
+        df = df.iloc[:, :required_cols]
+        column_names = [
+            'unit_number', 'time_cycles', 'setting_1', 'setting_2', 'setting_3'
+        ] + [f'sensor_{i}' for i in range(1, required_sensors + 1)]
         df.columns = column_names
         return df
     
