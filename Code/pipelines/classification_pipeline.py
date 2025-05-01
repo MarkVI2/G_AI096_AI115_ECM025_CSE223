@@ -1,30 +1,183 @@
+import os, sys
+# allow imports from project root (Code/) folder
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.loader import CMAPSSDataLoader
-from data.preprocessor import CMAPSSPreprocessor, prepare_data_for_classification, create_sequence_data
-from data.splitter import create_time_series_splits
+from data.preprocessor import CMAPSSPreprocessor, create_sequence_data
+from classification.base_model import BasicGBDTClassifier, MultiClassGBDTClassifier
+from classification.meta_classifier import MetaClassifier
+from classification.evaluator import ClassificationEvaluator
+from classification.smote import smote
+import pandas as pd
+import numpy as np
+import joblib
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.decomposition import PCA
+from sklearn.metrics import classification_report, confusion_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
 
+class ClassificationPipeline:
+    """
+    Pipeline for classification of degradation stages (Phase 2).
+    Uses cluster labels from Phase 1 or RUL-based discretization as targets.
+    """
+    def __init__(self,
+                 data_dir: str,
+                 dataset_id: str = "FD001",
+                 n_classes: int = 5,
+                 sequence_length: int = 30,
+                 classifier_type: str = 'random_forest',  # options: random_forest, svm, logistic, scratch
+                 oversample: bool = False,
+                 n_pca_components: int = None,
+                 random_state: int = 42):
+        self.data_dir = data_dir
+        self.dataset_id = dataset_id
+        self.n_classes = n_classes
+        self.sequence_length = sequence_length
+        self.classifier_type = classifier_type
+        self.oversample = oversample
+        self.n_pca_components = n_pca_components
+        self.random_state = random_state
+        np.random.seed(self.random_state)
+        
+        # Components
+        self.loader = CMAPSSDataLoader(self.data_dir)
+        self.preprocessor = CMAPSSPreprocessor(normalization_method='minmax', scale_per_unit=False)
+        # scratch GBDT/meta for classifier_type='scratch'
+        self.base_model = BasicGBDTClassifier(n_estimators=100, learning_rate=0.1, max_depth=3)
+        self.meta_classifier = MetaClassifier(random_state=self.random_state)
+        self.evaluator = ClassificationEvaluator()
+        
+        # Data containers
+        self.train_seq = None
+        self.train_labels = None
+        self.test_seq = None
+        self.test_labels = None
+        self.model = None
+        
+    def load_and_preprocess(self):
+        """
+        Load train/test data, compute RUL, preprocess features.
+        """
+        # Load dataset and label data
+        self.loader.load_dataset(self.dataset_id)
+        train_df = self.loader.calculate_rul_for_training(self.dataset_id)
+        test_df = self.loader.prepare_test_with_rul(self.dataset_id)
+        
+        # Preprocess
+        train_proc = self.preprocessor.fit_transform(train_df, add_remaining_features=True, add_sensor_diff=True)
+        test_proc = self.preprocessor.transform(test_df, add_remaining_features=True, add_sensor_diff=True)
+        
+        # Discretize RUL into classes for classification target
+        train_proc['degradation_stage'] = pd.cut(
+            train_proc['RUL'], bins=self.n_classes, labels=False, include_lowest=True
+        )
+        test_proc['degradation_stage'] = pd.cut(
+            test_proc['RUL'], bins=self.n_classes, labels=False, include_lowest=True
+        )
+        
+        # Sequence creation using helper
+        feature_cols = [c for c in train_proc.columns if c not in ['unit_number','time_cycles','RUL','degradation_stage']]
+        self.train_seq, self.train_labels = create_sequence_data(
+            train_proc, sequence_length=self.sequence_length, feature_columns=feature_cols, target_column='degradation_stage'
+        )
+        self.test_seq, self.test_labels = create_sequence_data(
+            test_proc, sequence_length=self.sequence_length, feature_columns=feature_cols, target_column='degradation_stage'
+        )
+        return self
 
-def run_classification(data_path: str, clustering_results=None):
+    def train(self):
+        """
+        Train the meta-classifier on sequence data.
+        """
+        # Flatten features
+        n_samples = self.train_seq.shape[0]
+        X = self.train_seq.reshape(n_samples, -1)
+        y = self.train_labels
+        # Dimensionality reduction if requested
+        if self.n_pca_components:
+            pca = PCA(n_components=self.n_pca_components, random_state=self.random_state)
+            X = pca.fit_transform(X)
+        # Oversample class imbalance
+        if self.oversample:
+            # Use custom SMOTE implementation
+            X, y = smote(X, y, k_neighbors=5, random_state=self.random_state)
+        # Select classifier
+        if self.classifier_type == 'random_forest':
+            model = RandomForestClassifier(class_weight='balanced', n_estimators=100, n_jobs=-1, random_state=self.random_state)
+        elif self.classifier_type == 'svm':
+            model = SVC(probability=True, class_weight='balanced', random_state=self.random_state)
+        elif self.classifier_type == 'logistic':
+            model = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=self.random_state)
+        elif self.classifier_type == 'scratch':
+            # scratch ensemble
+            self.base_model.fit(self.train_seq, y)
+            self.meta_classifier.fit(self.train_seq, y)
+            self.model = self.meta_classifier
+            return self
+        else:
+            raise ValueError(f"Unknown classifier_type '{self.classifier_type}'")
+        # Fit sklearn model
+        model.fit(X, y)
+        self.model = model
+        return self
+
+    def evaluate(self):
+        """
+        Evaluate trained model on test data and print metrics.
+        """
+        # Flatten and transform test data same as train
+        n_samples = self.test_seq.shape[0]
+        X_test = self.test_seq.reshape(n_samples, -1)
+        if self.n_pca_components:
+            X_test = pca.transform(X_test)
+        preds = self.model.predict(X_test)
+        probs = self.model.predict_proba(X_test)
+        metrics = self.evaluator.evaluate(self.test_labels, preds, probs)
+        print("Classification Evaluation:")
+        # Print overall metrics
+        print(metrics)
+        # Detailed per-class report
+        print("\nClassification Report:")
+        report = classification_report(self.test_labels, preds, zero_division=0, output_dict=True)
+        print(classification_report(self.test_labels, preds, zero_division=0))
+        # Focus on critical classes (last two stages)
+        for stage in [str(self.n_classes-2), str(self.n_classes-1)]:
+            if stage in report:
+                stats = report[stage]
+                print(f"Stage {stage} - precision: {stats['precision']:.3f}, recall: {stats['recall']:.3f}, f1-score: {stats['f1-score']:.3f}")
+        # Confusion matrix heatmap
+        cm = confusion_matrix(self.test_labels, preds)
+        plt.figure(figsize=(6,5))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+        plt.title('Confusion Matrix')
+        plt.xlabel('Predicted')
+        plt.ylabel('True')
+        plt.show()
+        return metrics
+
+    def save_model(self, output_path: str):
+        """
+        Save the trained model to disk.
+        """
+        joblib.dump(self.model, output_path)
+        return self
+
+def run_classification(data_dir: str, cluster_labels=None, dataset_id: str = "FD001", n_classes: int = 5, sequence_length: int = 30, random_state: int = 42):
     """
-    Stub for classification pipeline.
-    Args:
-        data_path: Path to CMAPSS dataset
-        clustering_results: Optional clustering results from phase 1
+    Convenience wrapper to run the classification pipeline end-to-end.
     """
-    # Load data and compute RUL
-    loader = CMAPSSDataLoader(data_path)
-    train_df = loader.calculate_rul_for_training()
-    # Preprocess training data with time-series features
-    preprocessor = CMAPSSPreprocessor(normalization_method='minmax', scale_per_unit=False)
-    train_proc = preprocessor.fit_transform(train_df, add_remaining_features=True, add_sensor_diff=True)
-    # Discretize RUL into degradation stages
-    train_labeled = prepare_data_for_classification(train_proc, n_classes=5)
-    # Create sequence data across all cycles
-    feature_cols = [c for c in train_labeled.columns if c not in ['unit_number','time_cycles','RUL','degradation_stage']]
-    X_seq, y_seq = create_sequence_data(train_labeled, sequence_length=30, feature_columns=feature_cols, target_column='degradation_stage')
-    print(f"Created sequence data: X={X_seq.shape}, y={y_seq.shape}")
-    # Time-series splits per engine
-    splits = create_time_series_splits(train_labeled, n_splits=5)
-    for eid, engine_splits in splits.items():
-        print(f"Engine {eid} has {len(engine_splits)} time-series folds")
-    # TODO: train and evaluate classifier on sequence data
-    return None
+    pipeline = ClassificationPipeline(
+        data_dir=data_dir,
+        dataset_id=dataset_id,
+        n_classes=n_classes,
+        sequence_length=sequence_length,
+        random_state=random_state
+    )
+    # Optionally merge provided cluster_labels (unused for now)
+    pipeline.load_and_preprocess()
+    pipeline.train()
+    metrics = pipeline.evaluate()
+    return metrics
