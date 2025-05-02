@@ -432,6 +432,38 @@ class CMAPSSPreprocessor:
         plt.tight_layout()
         plt.show()
 
+    def select_top_k_features(self, df: pd.DataFrame, feature_columns: List[str], target_column: str, k: int) -> List[str]:
+        """
+        Select top k features based on ANOVA F-score between classes.
+        """
+        # Compute global mean
+        y = df[target_column]
+        classes = y.unique()
+        feature_scores = {}
+        for feat in feature_columns:
+            # overall mean
+            grand_mean = df[feat].mean()
+            ss_between = 0.0
+            ss_within = 0.0
+            for cls in classes:
+                grp = df[df[target_column] == cls][feat]
+                n_grp = len(grp)
+                if n_grp == 0:
+                    continue
+                mean_grp = grp.mean()
+                ss_between += n_grp * (mean_grp - grand_mean) ** 2
+                ss_within += ((grp - mean_grp) ** 2).sum()
+            # degrees of freedom
+            df_between = len(classes) - 1
+            df_within = len(df) - len(classes)
+            ms_between = ss_between / df_between if df_between > 0 else 0
+            ms_within = ss_within / df_within if df_within > 0 else 0
+            f_score = ms_between / ms_within if ms_within > 0 else 0
+            feature_scores[feat] = f_score
+        # select top k
+        selected = sorted(feature_scores, key=lambda x: feature_scores[x], reverse=True)[:k]
+        return selected
+
     def get_important_features(self, df: pd.DataFrame, target_col: str = 'RUL', 
                               method: str = 'correlation', top_n: int = 10) -> pd.Series:
         """
