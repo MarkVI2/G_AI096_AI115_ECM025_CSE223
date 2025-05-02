@@ -7,10 +7,11 @@ class DecisionTreeRegressorScratch:
     """
     Simple decision tree regressor implementing CART for regression tasks.
     """
-    def __init__(self, max_depth: int = 3, min_samples_split: int = 2, min_samples_leaf: int = 1):
+    def __init__(self, max_depth: int = 3, min_samples_split: int = 2, min_samples_leaf: int = 1, n_random_splits: int = None):
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
+        self.n_random_splits = n_random_splits  # number of random thresholds to try per feature
         self.tree = None
 
     class Node:
@@ -35,7 +36,12 @@ class DecisionTreeRegressorScratch:
         best_mse = float('inf')
         best_idx, best_thr = None, None
         for feature in range(n_features):
-            thresholds = set(X[:, feature])
+            unique_vals = sorted(set(X[:, feature]))
+            # Randomized threshold selection for faster splits
+            if self.n_random_splits and len(unique_vals) > self.n_random_splits:
+                thresholds = np.random.choice(unique_vals, size=self.n_random_splits, replace=False)
+            else:
+                thresholds = unique_vals
             for thr in thresholds:
                 left_mask = X[:, feature] <= thr
                 if left_mask.sum() < self.min_samples_leaf or (~left_mask).sum() < self.min_samples_leaf:
@@ -72,7 +78,10 @@ class BasicGBDTClassifier:
                  min_samples_split: int = 2,
                  min_samples_leaf: int = 1,
                  ccp_alpha: float = 0.0,
-                 subsample: float = 1.0):
+                 subsample: float = 1.0,
+                 max_features=None,
+                 early_stopping_rounds: int = None,
+                 tol: float = 1e-4):
         self.n_estimators = n_estimators
         self.learning_rate = learning_rate
         self.max_depth = max_depth
@@ -81,20 +90,28 @@ class BasicGBDTClassifier:
         self.ccp_alpha = ccp_alpha  # complexity pruning parameter
         self.subsample = subsample  # fraction of samples per tree
         self.trees: List[DecisionTreeRegressorScratch] = []
+        self.features_subsets: List[np.ndarray] = []
         self.init_score: float = 0.0
+        self.max_features = max_features
+        self.early_stopping_rounds = early_stopping_rounds
+        self.tol = tol
 
-    def fit(self, X: np.ndarray, y: np.ndarray):
+    def fit(self, X: np.ndarray, y: np.ndarray, X_val=None, y_val=None):
         # Flatten sequences to 2D feature matrix
         n_samples = X.shape[0]
         if X.ndim > 2:
             X_flat = X.reshape(n_samples, -1)
         else:
             X_flat = X
+        n_features = X_flat.shape[1]
         # y should be binary {0,1}
         # Initialize model score as log odds
         p = np.clip(np.mean(y), 1e-5, 1 - 1e-5)
         self.init_score = np.log(p / (1 - p))
         F = np.full(shape=y.shape, fill_value=self.init_score)
+        # Setup early stopping
+        best_loss = float('inf')
+        no_improve_rounds = 0
         # Gradient boosting iterations
         for m in range(self.n_estimators):
             prob = 1 / (1 + np.exp(-F))
@@ -102,9 +119,20 @@ class BasicGBDTClassifier:
             # Optionally subsample rows
             if 0 < self.subsample < 1.0:
                 idx = np.random.choice(n_samples, int(self.subsample * n_samples), replace=False)
-                X_train, y_train = X_flat[idx], residual[idx]
+                X_train_full, y_train = X_flat[idx], residual[idx]
             else:
-                X_train, y_train = X_flat, residual
+                X_train_full, y_train = X_flat, residual
+            # Feature bagging if requested
+            if self.max_features:
+                if isinstance(self.max_features, float) and self.max_features < 1:
+                    kf = int(self.max_features * n_features)
+                else:
+                    kf = int(self.max_features)
+                feat_idx = np.random.choice(n_features, kf, replace=False)
+            else:
+                feat_idx = np.arange(n_features)
+            X_train = X_train_full[:, feat_idx]
+            self.features_subsets.append(feat_idx)
             # Fit regression tree on residuals
             tree = DecisionTreeRegressorScratch(
                 max_depth=self.max_depth,
@@ -114,7 +142,25 @@ class BasicGBDTClassifier:
             tree.fit(X_train, y_train)
             self.trees.append(tree)
             # Update F for all samples
-            F += self.learning_rate * tree.predict(X_flat)
+            F += self.learning_rate * tree.predict(X_flat[:, feat_idx])
+            # early stopping on validation set
+            if X_val is not None and y_val is not None and self.early_stopping_rounds:
+                # compute val F and loss
+                n_val = X_val.shape[0]
+                Xv_flat = X_val.reshape(n_val, -1) if X_val.ndim > 2 else X_val
+                Fv = np.full(shape=y_val.shape, fill_value=self.init_score)
+                for t, t_feat in zip(self.trees, self.features_subsets):
+                    Fv += self.learning_rate * t.predict(Xv_flat[:, t_feat])
+                pv = 1 / (1 + np.exp(-Fv))
+                loss = -np.mean(y_val * np.log(pv+1e-15) + (1-y_val)*np.log(1-pv+1e-15))
+                # check improvement
+                if best_loss - loss > self.tol:
+                    best_loss = loss
+                    no_improve_rounds = 0
+                else:
+                    no_improve_rounds += 1
+                    if no_improve_rounds >= self.early_stopping_rounds:
+                        break
         return self
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
@@ -126,8 +172,8 @@ class BasicGBDTClassifier:
             X_flat = X
         # Aggregate predictions
         F = np.full(shape=(n_samples,), fill_value=self.init_score)
-        for tree in self.trees:
-            F += self.learning_rate * tree.predict(X_flat)
+        for tree, feat_idx in zip(self.trees, self.features_subsets):
+            F += self.learning_rate * tree.predict(X_flat[:, feat_idx])
         prob = 1 / (1 + np.exp(-F))
         # Return 2-column probability for binary classes
         return np.vstack([1 - prob, prob]).T

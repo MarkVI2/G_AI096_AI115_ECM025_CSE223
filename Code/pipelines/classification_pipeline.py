@@ -7,14 +7,11 @@ from classification.base_model import BasicGBDTClassifier, MultiClassGBDTClassif
 from classification.meta_classifier import MetaClassifier
 from classification.evaluator import ClassificationEvaluator
 from classification.smote import smote
+from classification.classifiers import RandomForestScratch, SVMScratch
+from classification.base_model import LogisticRegressionScratch
 import pandas as pd
 import numpy as np
 import joblib
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
-from sklearn.decomposition import PCA
-from sklearn.metrics import classification_report, confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
 
@@ -96,30 +93,41 @@ class ClassificationPipeline:
         n_samples = self.train_seq.shape[0]
         X = self.train_seq.reshape(n_samples, -1)
         y = self.train_labels
-        # Dimensionality reduction if requested
-        if self.n_pca_components:
-            pca = PCA(n_components=self.n_pca_components, random_state=self.random_state)
-            X = pca.fit_transform(X)
         # Oversample class imbalance
         if self.oversample:
             # Use custom SMOTE implementation
             X, y = smote(X, y, k_neighbors=5, random_state=self.random_state)
-        # Select classifier
+        # Select and fit scratch classifier
         if self.classifier_type == 'random_forest':
-            model = RandomForestClassifier(class_weight='balanced', n_estimators=100, n_jobs=-1, random_state=self.random_state)
+            model = RandomForestScratch(
+                n_estimators=100,
+                max_depth=5,
+                min_samples_split=2,
+                min_samples_leaf=1,
+                max_features=int(X.shape[1]**0.5),
+                random_state=self.random_state
+            )
         elif self.classifier_type == 'svm':
-            model = SVC(probability=True, class_weight='balanced', random_state=self.random_state)
+            model = SVMScratch(
+                C=1.0,
+                learning_rate=0.001,
+                n_iter=500,
+                class_weight='balanced'
+            )
         elif self.classifier_type == 'logistic':
-            model = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=self.random_state)
+            model = LogisticRegressionScratch(
+                learning_rate=0.01,
+                n_iterations=500,
+                reg_lambda=1e-3
+            )
         elif self.classifier_type == 'scratch':
-            # scratch ensemble
+            # scratch gradient-boost ensemble
             self.base_model.fit(self.train_seq, y)
             self.meta_classifier.fit(self.train_seq, y)
             self.model = self.meta_classifier
             return self
         else:
             raise ValueError(f"Unknown classifier_type '{self.classifier_type}'")
-        # Fit sklearn model
         model.fit(X, y)
         self.model = model
         return self
@@ -135,21 +143,25 @@ class ClassificationPipeline:
             X_test = pca.transform(X_test)
         preds = self.model.predict(X_test)
         probs = self.model.predict_proba(X_test)
+        # Compute and print custom metrics
         metrics = self.evaluator.evaluate(self.test_labels, preds, probs)
         print("Classification Evaluation:")
-        # Print overall metrics
         print(metrics)
-        # Detailed per-class report
-        print("\nClassification Report:")
-        report = classification_report(self.test_labels, preds, zero_division=0, output_dict=True)
-        print(classification_report(self.test_labels, preds, zero_division=0))
-        # Focus on critical classes (last two stages)
-        for stage in [str(self.n_classes-2), str(self.n_classes-1)]:
-            if stage in report:
-                stats = report[stage]
-                print(f"Stage {stage} - precision: {stats['precision']:.3f}, recall: {stats['recall']:.3f}, f1-score: {stats['f1-score']:.3f}")
-        # Confusion matrix heatmap
-        cm = confusion_matrix(self.test_labels, preds)
+        # Compute confusion matrix from scratch
+        cm = np.zeros((self.n_classes, self.n_classes), dtype=int)
+        for true, pred in zip(self.test_labels, preds):
+            cm[true, pred] += 1
+        # Per-class precision, recall, f1
+        print("\nPer-class metrics:")
+        for cls in range(self.n_classes):
+            tp = cm[cls, cls]
+            fp = cm[:, cls].sum() - tp
+            fn = cm[cls, :].sum() - tp
+            prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = (2 * prec * rec / (prec + rec)) if (prec + rec) > 0 else 0.0
+            print(f"Stage {cls} - precision: {prec:.3f}, recall: {rec:.3f}, f1: {f1:.3f}, support: {self.test_labels.tolist().count(cls)}")
+        # Plot confusion matrix heatmap
         plt.figure(figsize=(6,5))
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
         plt.title('Confusion Matrix')
