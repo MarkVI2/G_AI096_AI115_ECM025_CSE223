@@ -3,7 +3,7 @@ import numpy as np
 class ClassificationEvaluator:
     """
     Evaluator for classification models, computing accuracy, precision,
-    recall, F1 and log‑loss without any sklearn calls.
+    recall, F1 and log-loss without any sklearn calls.
     """
     def evaluate(self, y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> dict:
         n = len(y_true)

@@ -572,22 +572,14 @@ def prepare_data_for_classification(df: pd.DataFrame,
 
 def create_sequence_data(df: pd.DataFrame, sequence_length: int, 
                         feature_columns: List[str], target_column: str,
-                        step: int = 1) -> Tuple[np.ndarray, np.ndarray]:
+                        step: int = 1) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Create sequences of data for sequence modeling (RNN, LSTM, etc.)
-    
-    Args:
-        df: DataFrame with time series data
-        sequence_length: Length of sequences to create
-        feature_columns: Columns to use as features
-        target_column: Column to use as target
-        step: Step size between sequences
-        
-    Returns:
-        Tuple of (X_sequences, y_sequences)
+    Returns sequences X, targets y, and group ids for each sequence.
     """
     sequences = []
     targets = []
+    groups = []
     
     # Process each engine unit separately
     for unit in df['unit_number'].unique():
@@ -605,8 +597,9 @@ def create_sequence_data(df: pd.DataFrame, sequence_length: int,
         for i in range(0, len(unit_data) - sequence_length + 1, step):
             sequences.append(unit_features[i:i+sequence_length])
             targets.append(unit_targets[i+sequence_length-1])  # Target is the last value in sequence
+            groups.append(unit)  # record unit id for this sequence
     
-    return np.array(sequences), np.array(targets)
+    return np.array(sequences), np.array(targets), np.array(groups)
 
 
 if __name__ == "__main__":
@@ -658,7 +651,7 @@ if __name__ == "__main__":
     
     # Create sequence data for time series modeling
     feature_cols = important_features.index.tolist()
-    X_seq, y_seq = create_sequence_data(
+    X_seq, y_seq, groups = create_sequence_data(
         train_classified, 
         sequence_length=30, 
         feature_columns=feature_cols,
@@ -666,4 +659,4 @@ if __name__ == "__main__":
         step=1
     )
     
-    print(f"Sequence data shape: X={X_seq.shape}, y={y_seq.shape}")
+    print(f"Sequence data shape: X={X_seq.shape}, y={y_seq.shape}, groups={groups.shape}")

@@ -1,5 +1,6 @@
 import numpy as np
 from typing import List, Optional, Dict
+from joblib import Parallel, delayed
 
 class DecisionTreeClassifierScratch:
     """CART decision tree classifier based on Gini impurity."""
@@ -93,21 +94,23 @@ class RandomForestScratch:
     def fit(self, X: np.ndarray, y: np.ndarray):
         np.random.seed(self.random_state)
         m, n = X.shape
-        for i in range(self.n_estimators):
-            # bootstrap sample
+        # build trees in parallel
+        def _build_tree(_):
             idx = np.random.choice(m, m, replace=True)
             X_sample, y_sample = X[idx], y[idx]
-            # feature subset
             if self.max_features is None:
                 feat_idx = np.arange(n)
             else:
                 feat_idx = np.random.choice(n, self.max_features, replace=False)
-            # train tree
-            tree = DecisionTreeClassifierScratch(max_depth=self.max_depth, min_samples_split=self.min_samples_split, min_samples_leaf=self.min_samples_leaf)
-            # attach subset
+            tree = DecisionTreeClassifierScratch(
+                max_depth=self.max_depth,
+                min_samples_split=self.min_samples_split,
+                min_samples_leaf=self.min_samples_leaf
+            )
             tree.feat_idx = feat_idx
             tree.fit(X_sample[:, feat_idx], y_sample)
-            self.trees.append(tree)
+            return tree
+        self.trees = Parallel(n_jobs=-1)(delayed(_build_tree)(i) for i in range(self.n_estimators))
         self.n_classes = len(np.unique(y))
         return self
     def predict(self, X: np.ndarray) -> np.ndarray:

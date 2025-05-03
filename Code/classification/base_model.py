@@ -187,44 +187,94 @@ class MultiClassGBDTClassifier(BaseEstimator, ClassifierMixin):
     One-vs-rest multi-class gradient boosting using BasicGBDTClassifier.
     """
     def __init__(self,
-                 n_classes: int,
+                 n_classes: int = None,
                  n_estimators: int = 100,
                  learning_rate: float = 0.1,
                  max_depth: int = 3,
                  min_samples_split: int = 2,
                  min_samples_leaf: int = 1,
                  ccp_alpha: float = 0.0,
-                 subsample: float = 1.0):
+                 subsample: float = 1.0,
+                 n_jobs: int = -1):
         self.n_classes = n_classes
-        # Create one binary GBDT per class
-        self.models = [
-            BasicGBDTClassifier(
-                n_estimators=n_estimators,
-                learning_rate=learning_rate,
-                max_depth=max_depth,
-                min_samples_split=min_samples_split,
-                min_samples_leaf=min_samples_leaf,
-                ccp_alpha=ccp_alpha,
-                subsample=subsample
-            ) for _ in range(n_classes)
-        ]
+        self.n_estimators = n_estimators
+        self.learning_rate = learning_rate
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_samples_leaf = min_samples_leaf
+        self.ccp_alpha = ccp_alpha
+        self.subsample = subsample
+        self.n_jobs = n_jobs
+        self.models = None  # Will be initialized during fit
 
     def fit(self, X: np.ndarray, y: np.ndarray):
+        # Determine number of classes if not provided
+        if self.n_classes is None:
+            self.n_classes_ = len(np.unique(y))
+        else:
+            self.n_classes_ = self.n_classes
+            
+        # Initialize models - create one binary GBDT per class
+        self.models = [
+            BasicGBDTClassifier(
+                n_estimators=self.n_estimators,
+                learning_rate=self.learning_rate,
+                max_depth=self.max_depth,
+                min_samples_split=self.min_samples_split,
+                min_samples_leaf=self.min_samples_leaf,
+                ccp_alpha=self.ccp_alpha,
+                subsample=self.subsample
+            ) for _ in range(self.n_classes_)
+        ]
+            
         # Flatten input
         n_samples = X.shape[0]
         X_flat = X.reshape(n_samples, -1) if X.ndim > 2 else X
-        # Train one-vs-rest binary classifiers
-        for k, model in enumerate(self.models):
-            y_bin = (y == k).astype(int)
+        
+        # Train one-vs-rest binary classifiers in parallel
+        from joblib import Parallel, delayed
+        
+        def _fit_one_classifier(model_idx):
+            """Helper function to train a single classifier in parallel"""
+            model = self.models[model_idx]
+            y_bin = (y == model_idx).astype(int)
             model.fit(X_flat, y_bin)
+            return model
+        
+        # Use parallel processing if n_jobs != 1
+        if self.n_jobs != 1:
+            self.models = Parallel(n_jobs=self.n_jobs)(
+                delayed(_fit_one_classifier)(k) for k in range(self.n_classes_)
+            )
+        else:
+            # Sequential processing fallback
+            for k in range(self.n_classes_):
+                _fit_one_classifier(k)
+        
         return self
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         n_samples = X.shape[0]
         X_flat = X.reshape(n_samples, -1) if X.ndim > 2 else X
-        # Gather probabilities for positive class from each binary model
-        probas = [model.predict_proba(X_flat)[:, 1] for model in self.models]
+        
+        # Gather probabilities for positive class from each binary model in parallel
+        from joblib import Parallel, delayed
+        
+        def _predict_one_model(model):
+            """Helper function to get predictions from one model in parallel"""
+            return model.predict_proba(X_flat)[:, 1]
+        
+        # Use parallel processing if n_jobs != 1
+        if self.n_jobs != 1:
+            probas = Parallel(n_jobs=self.n_jobs)(
+                delayed(_predict_one_model)(model) for model in self.models
+            )
+        else:
+            # Sequential processing fallback
+            probas = [_predict_one_model(model) for model in self.models]
+            
         proba_matrix = np.vstack(probas).T
+        
         # Normalize rows to sum to 1 (softmax-like)
         row_sums = proba_matrix.sum(axis=1, keepdims=True)
         return proba_matrix / np.clip(row_sums, a_min=1e-8, a_max=None)
