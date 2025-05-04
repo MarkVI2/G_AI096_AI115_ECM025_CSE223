@@ -4,3 +4,4 @@ matplotlib
 scikit-learn
 seaborn
 imbalance-learn
+xgboost
