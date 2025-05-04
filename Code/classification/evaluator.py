@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, classification_report, f1_score, precision_score, recall_score
 
+# add these imports at top
+from classification.base_model import CustomRandomForest, CustomLogisticRegression
+
 def evaluate_model(model, X_test, y_test):
     """Evaluate model performance with multiple metrics"""
     # Make predictions
@@ -40,49 +43,49 @@ def evaluate_model(model, X_test, y_test):
     }
 
 def analyze_feature_importance(model, feature_names):
-    """Analyze and plot feature importance for tree-based models"""
-    from classification.base_model import CustomRandomForest
-    
+    """Plot and return feature importances for RF or LR."""
+    # 1) sklearn RF
     if hasattr(model, 'feature_importances_'):
-        # For sklearn models like RandomForest
         importances = model.feature_importances_
+
+    # 2) custom RandomForest
     elif isinstance(model, CustomRandomForest):
-        # For our custom RandomForest, calculate importances manually
         importances = np.zeros(len(feature_names))
-        # This is a simplified version, ideally we'd track feature usage in the custom model
+        def _gather(node, acc):
+            if node is None or node.feature is None: 
+                return
+            acc.append(node.feature)
+            _gather(node.left, acc)
+            _gather(node.right, acc)
+
         for tree in model.trees:
-            # Count feature usage in each tree (simplified)
-            used_features = _extract_used_features(tree.root, set())
-            for feat in used_features:
-                if feat is not None:
-                    importances[feat] += 1
-        # Normalize
-        if np.sum(importances) > 0:
-            importances = importances / np.sum(importances)
+            feats = []
+            _gather(tree.root, feats)
+            for f in feats:
+                importances[f] += 1
+        importances = importances / importances.sum()
+
+    # 3) custom LogisticRegression
+    elif isinstance(model, CustomLogisticRegression):
+        # model.weights: shape (n_features, n_classes)
+        coefs = model.weights
+        # sum absolute across classes
+        importances = np.sum(np.abs(coefs), axis=1)
+        # normalize
+        if importances.sum() > 0:
+            importances = importances / importances.sum()
+
     else:
-        # For other models, we can't easily get feature importance
-        print("Feature importance analysis not implemented for this model type")
+        print("Feature importance not implemented for this model type")
         return None
-    
-    # Sort features by importance
+
+    # sort and plot
     indices = np.argsort(importances)[::-1]
-    
-    # Plot
-    plt.figure(figsize=(12, 8))
-    plt.title('Feature Importance')
+    plt.figure(figsize=(12,6))
+    plt.title("Feature importance")
     plt.bar(range(len(indices)), importances[indices], align='center')
-    plt.xticks(range(len(indices)), [feature_names[i] for i in indices], rotation=90)
+    plt.xticks(range(len(indices)),
+               [feature_names[i] for i in indices],
+               rotation=90, fontsize=8)
     plt.tight_layout()
     return importances, indices
-
-def _extract_used_features(node, feature_set):
-    """Helper function to extract features used in a tree"""
-    if node is None:
-        return feature_set
-    
-    if node.feature is not None:
-        feature_set.add(node.feature)
-        feature_set = _extract_used_features(node.left, feature_set)
-        feature_set = _extract_used_features(node.right, feature_set)
-    
-    return feature_set

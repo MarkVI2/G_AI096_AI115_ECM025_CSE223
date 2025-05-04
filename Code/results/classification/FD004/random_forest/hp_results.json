@@ -1,0 +1,12 @@
+{
+  "{\"max_depth\": 5, \"min_samples_split\": 10, \"n_estimators\": 200}": 0.8851783107836925,
+  "{\"max_depth\": 10, \"min_samples_split\": 5, \"n_estimators\": 100}": 0.9738250509146434,
+  "{\"max_depth\": 10, \"min_samples_split\": 2, \"n_estimators\": 50}": 0.9738250509146434,
+  "{\"max_depth\": null, \"min_samples_split\": 5, \"n_estimators\": 50}": 0.9776353023696515,
+  "{\"max_depth\": 5, \"min_samples_split\": 2, \"n_estimators\": 50}": 0.8752474179474364,
+  "{\"max_depth\": 10, \"min_samples_split\": 2, \"n_estimators\": 200}": 0.9776016922716843,
+  "{\"max_depth\": 10, \"min_samples_split\": 10, \"n_estimators\": 100}": 0.9776016922716843,
+  "{\"max_depth\": 10, \"min_samples_split\": 10, \"n_estimators\": 200}": 0.9738250509146434,
+  "{\"max_depth\": 10, \"min_samples_split\": 5, \"n_estimators\": 50}": 0.9738250509146434,
+  "{\"max_depth\": null, \"min_samples_split\": 10, \"n_estimators\": 50}": 0.9776016922716843
+}
