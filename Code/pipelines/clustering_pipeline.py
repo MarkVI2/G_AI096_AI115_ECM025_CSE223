@@ -157,6 +157,30 @@ class ClusteringPipeline:
         
         return self
     
+    def filter_low_variance_features(self, X, threshold=0.001):
+        """Filter out features with variance below threshold"""
+        # Calculate variance for each feature
+        variances = np.var(X, axis=0)
+        # Create mask for features with variance above threshold
+        mask = variances > threshold
+        # Print diagnostic info
+        if self.verbose:
+            n_removed = np.sum(~mask)
+            if n_removed > 0:
+                print(f"Removing {n_removed} features with variance < {threshold}")
+                low_var_indices = np.where(~mask)[0]
+                print(f"Low variance feature indices: {low_var_indices}")
+        return X[:, mask], mask
+
+    def apply_variance_based_weights(self, X):
+        """Apply weights to features based on their variance"""
+        # Calculate variance for each feature
+        variances = np.var(X, axis=0)
+        # Normalize variances to create weights (sum to 1)
+        weights = variances / np.sum(variances)
+        # Apply weights to features
+        return X * weights, weights
+
     def run_clustering(self, engines: Optional[List[int]] = None, data_subset: str = 'train'):
         """
         Run hierarchical clustering on engine data.
@@ -178,13 +202,20 @@ class ClusteringPipeline:
         if engines is None:
             engines = sorted(data['unit_number'].unique())
         
-        # Select features for clustering: include time_cycles, operational settings, and raw sensors
-        op_cols = [col for col in data.columns if col.startswith('setting_')]
-        sensor_cols = [col for col in data.columns if col.startswith('sensor_')]
+        # Select features for clustering
+        op_cols = [c for c in data.columns if c.startswith('setting_')]
+        sensor_cols = [c for c in data.columns if c.startswith('sensor_')]
         feature_cols = ['time_cycles'] + op_cols + sensor_cols
-        if self.verbose:
-            print(f"Using {len(feature_cols)} features (time_cycles + settings + sensors) for clustering")
 
+        # 1) Global low‑variance filter to lock in a single feature set for all engines
+        full_X = data[feature_cols].values
+        _, self.global_variance_mask = self.filter_low_variance_features(full_X)
+        self.filtered_feature_cols_global = [
+            feature_cols[i] for i, keep in enumerate(self.global_variance_mask) if keep
+        ]
+        if self.verbose:
+            print(f"Using {len(self.filtered_feature_cols_global)} global features: {self.filtered_feature_cols_global}")
+ 
         if self.verbose:
             print(f"Running clustering for {len(engines)} engines using {len(feature_cols)} features")
             print(f"Clustering settings: method=HAC, linkage={self.linkage}, distance={self.distance_metric}")
@@ -195,36 +226,52 @@ class ClusteringPipeline:
             engine_data = data[data['unit_number'] == eid]
             if len(engine_data) < self.n_clusters:
                 return None
+
+            # apply the same global mask to each engine
             X_e = engine_data[feature_cols].values
-            # Debug: Show scaling stats for first engine in verbose mode
+            X_e_filtered = X_e[:, self.global_variance_mask]
+
+            # 3) Apply variance-based weights to filtered data
+            X_e_weighted, feature_weights = self.apply_variance_based_weights(X_e_filtered)
+# Debug: Show scaling stats for first engine in verbose mode
             if self.verbose:
-                mins = X_e.min(axis=0)
-                maxs = X_e.max(axis=0)
-                means = X_e.mean(axis=0)
-                stds = X_e.std(axis=0)
+                mins = X_e_weighted.min(axis=0)
+                maxs = X_e_weighted.max(axis=0)
+                means = X_e_weighted.mean(axis=0)
+                stds = X_e_weighted.std(axis=0)
                 print(f"Engine {eid} feature stats: min={mins[:3]}, max={maxs[:3]}, mean={means[:3]}, std={stds[:3]}")
             tc_e = engine_data['time_cycles'].values
+
             model = HierarchicalAgglomerativeClustering(
                 n_clusters=self.n_clusters,
                 linkage=self.linkage,
                 distance_metric=self.distance_metric,
                 verbose=self.verbose
             )
-            labels_e = model.fit_predict(X_e)
+            labels_e = model.fit_predict(X_e_weighted)
+
             stages_e = map_clusters_to_degradation_stages(labels_e, tc_e)
-            stats_e = analyze_stage_characteristics(X_e, stages_e, feature_cols)
-            return eid, model, labels_e, stages_e, stats_e, engine_data, tc_e, X_e
+
+            # analyze with the global filtered feature names
+            stats_e = analyze_stage_characteristics(X_e_weighted, stages_e, self.filtered_feature_cols_global)
+
+            return eid, model, labels_e, stages_e, stats_e, engine_data, tc_e, X_e_weighted, self.filtered_feature_cols_global
+
         results = Parallel(n_jobs=-1)(delayed(_process)(eid) for eid in engines)
         for item in results:
             if item is None:
                 continue
-            eid, model, labels_e, stages_e, stats_e, edata, tc_e, X_e = item
+            (eid, model, labels_e, stages_e, stats_e,
+             edata, tc_e, X_e, filtered_feature_cols) = item
+
+            # 6) Store the filtered feature names for later visualization/analysis
             self.engine_clusters[eid] = {
                 'model': model,
                 'labels': labels_e,
                 'data': X_e,
                 'time_cycles': tc_e,
-                'engine_data': edata
+                'engine_data': edata,
+                'feature_cols': filtered_feature_cols
             }
             self.engine_stages[eid] = stages_e
             self.cluster_analysis[eid] = stats_e

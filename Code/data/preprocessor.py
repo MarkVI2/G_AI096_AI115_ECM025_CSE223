@@ -29,6 +29,8 @@ class CMAPSSPreprocessor:
         self.sensor_columns = None
         self.operating_setting_columns = None
         self.sensor_stats = {}
+        self.valid_sensors = []
+        self.valid_settings = []
         
     def fit(self, train_df: pd.DataFrame, sensor_columns: Optional[List[str]] = None,
             operating_setting_columns: Optional[List[str]] = None) -> 'CMAPSSPreprocessor':
@@ -129,7 +131,7 @@ class CMAPSSPreprocessor:
             }
     
     def _fit_scalers(self, df: pd.DataFrame) -> None:
-        """Fit scalers on the training data."""
+        """Fit scalers on the training data with variance checks."""
         # Create appropriate scaler
         if self.normalization_method == 'minmax':
             scaler_class = MinMaxScaler
@@ -140,6 +142,19 @@ class CMAPSSPreprocessor:
         else:
             return  # No scaling
 
+        # Check variance of columns
+        sensor_variance = df[self.sensor_columns].var()
+        valid_sensors = sensor_variance[sensor_variance > 0.001].index.tolist()
+        
+        if self.operating_setting_columns:
+            settings_variance = df[self.operating_setting_columns].var()
+            valid_settings = settings_variance[settings_variance > 0.001].index.tolist()
+        else:
+            valid_settings = []
+        
+        self.valid_sensors = valid_sensors
+        self.valid_settings = valid_settings
+        
         if self.scale_per_unit:
             # Fit a separate scaler for each engine unit
             for unit in df['unit_number'].unique():
@@ -147,25 +162,25 @@ class CMAPSSPreprocessor:
                 
                 # Sensor scaler
                 sensor_scaler = scaler_class()
-                sensor_scaler.fit(unit_data[self.sensor_columns])
+                sensor_scaler.fit(unit_data[self.valid_sensors])
                 self.scalers[f'sensor_{unit}'] = sensor_scaler
                 
                 # Operating settings scaler
-                if self.operating_setting_columns:
+                if self.valid_settings:
                     settings_scaler = scaler_class()
-                    settings_scaler.fit(unit_data[self.operating_setting_columns])
+                    settings_scaler.fit(unit_data[self.valid_settings])
                     self.scalers[f'settings_{unit}'] = settings_scaler
         else:
             # Fit one scaler for all engine units
             # Sensor scaler
             sensor_scaler = scaler_class()
-            sensor_scaler.fit(df[self.sensor_columns])
+            sensor_scaler.fit(df[self.valid_sensors])
             self.scalers['sensor'] = sensor_scaler
             
             # Operating settings scaler
-            if self.operating_setting_columns:
+            if self.valid_settings:
                 settings_scaler = scaler_class()
-                settings_scaler.fit(df[self.operating_setting_columns])
+                settings_scaler.fit(df[self.valid_settings])
                 self.scalers['settings'] = settings_scaler
     
     def _clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -274,6 +289,13 @@ class CMAPSSPreprocessor:
             Scaled DataFrame
         """
         result_df = df.copy()
+        if hasattr(self, 'valid_sensors'):
+            valid_sensors = result_df[self.valid_sensors]
+            valid_settings = result_df[self.valid_settings]
+        else:
+            # If not set, use all columns (fallback)
+            valid_sensors = self.sensor_columns
+            valid_settings = self.operating_setting_columns
         
         if self.scale_per_unit:
             # Scale each unit separately
@@ -283,33 +305,33 @@ class CMAPSSPreprocessor:
                 # Scale sensor columns
                 sensor_key = f'sensor_{unit}'
                 if sensor_key in self.scalers:
-                    result_df.loc[unit_mask, self.sensor_columns] = self.scalers[sensor_key].transform(
-                        result_df.loc[unit_mask, self.sensor_columns]
+                    result_df.loc[unit_mask, self.valid_sensors] = self.scalers[sensor_key].transform(
+                        result_df.loc[unit_mask, self.valid_sensors]
                     )
                 elif 'sensor' in self.scalers:  # Fallback to global scaler
-                    result_df.loc[unit_mask, self.sensor_columns] = self.scalers['sensor'].transform(
-                        result_df.loc[unit_mask, self.sensor_columns]
+                    result_df.loc[unit_mask, self.valid_sensors] = self.scalers['sensor'].transform(
+                        result_df.loc[unit_mask, self.valid_sensors]
                     )
                 
                 # Scale operating settings
-                if self.operating_setting_columns:
+                if self.valid_settings:
                     settings_key = f'settings_{unit}'
                     if settings_key in self.scalers:
-                        result_df.loc[unit_mask, self.operating_setting_columns] = self.scalers[settings_key].transform(
-                            result_df.loc[unit_mask, self.operating_setting_columns]
+                        result_df.loc[unit_mask, self.valid_settings] = self.scalers[settings_key].transform(
+                            result_df.loc[unit_mask, self.valid_settings]
                         )
                     elif 'settings' in self.scalers:  # Fallback to global scaler
-                        result_df.loc[unit_mask, self.operating_setting_columns] = self.scalers['settings'].transform(
-                            result_df.loc[unit_mask, self.operating_setting_columns]
+                        result_df.loc[unit_mask, self.valid_settings] = self.scalers['settings'].transform(
+                            result_df.loc[unit_mask, self.valid_settings]
                         )
         else:
             # Scale all units with the same scaler
             if 'sensor' in self.scalers:
-                result_df[self.sensor_columns] = self.scalers['sensor'].transform(result_df[self.sensor_columns])
+                result_df[self.valid_sensors] = self.scalers['sensor'].transform(result_df[self.valid_sensors])
                 
-            if self.operating_setting_columns and 'settings' in self.scalers:
-                result_df[self.operating_setting_columns] = self.scalers['settings'].transform(
-                    result_df[self.operating_setting_columns]
+            if self.valid_settings and 'settings' in self.scalers:
+                result_df[self.valid_settings] = self.scalers['settings'].transform(
+                    result_df[self.valid_settings]
                 )
                 
         return result_df
@@ -509,67 +531,6 @@ class CMAPSSPreprocessor:
             
         return importance.sort_values(ascending=False).head(top_n)
 
-
-# Helper functions
-def prepare_data_for_classification(df: pd.DataFrame, 
-                                   n_classes: int = 5, 
-                                   rul_column: str = 'RUL',
-                                   label_column: str = 'degradation_stage',
-                                   method: str = 'equal_width') -> pd.DataFrame:
-    """
-    Prepare data for classification by discretizing RUL into classes.
-    
-    Args:
-        df: DataFrame with RUL values
-        n_classes: Number of classes (stages) to create
-        rul_column: Name of the column containing RUL values
-        label_column: Name of the output column for class labels
-        method: Method for discretization ('equal_width', 'equal_freq', or 'custom')
-        
-    Returns:
-        DataFrame with added class labels
-    """
-    result_df = df.copy()
-    
-    if rul_column not in result_df.columns:
-        raise ValueError(f"RUL column '{rul_column}' not found in DataFrame")
-    
-    if method == 'equal_width':
-        # Equal width binning
-        result_df[label_column] = pd.cut(
-            result_df[rul_column], 
-            bins=n_classes, 
-            labels=range(n_classes-1, -1, -1)  # Reverse order: higher RUL = lower stage
-        )
-    elif method == 'equal_freq':
-        # Equal frequency binning
-        result_df[label_column] = pd.qcut(
-            result_df[rul_column], 
-            q=n_classes, 
-            labels=range(n_classes-1, -1, -1),  # Reverse order
-            duplicates='drop'
-        )
-    elif method == 'custom':
-        # Custom thresholds (example: for RUL-based stages)
-        max_rul = result_df[rul_column].max()
-        thresholds = [0, max_rul * 0.2, max_rul * 0.4, max_rul * 0.6, max_rul * 0.8, max_rul]
-        labels = list(range(n_classes-1, -1, -1))  # [4, 3, 2, 1, 0]
-        
-        result_df[label_column] = pd.cut(
-            result_df[rul_column],
-            bins=thresholds,
-            labels=labels,
-            include_lowest=True
-        )
-    else:
-        raise ValueError(f"Unknown method: {method}")
-    
-    # Convert to integer
-    result_df[label_column] = result_df[label_column].astype(int)
-    
-    return result_df
-
-
 def create_sequence_data(df: pd.DataFrame, sequence_length: int, 
                         feature_columns: List[str], target_column: str,
                         step: int = 1) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -631,32 +592,5 @@ if __name__ == "__main__":
     # Preprocess test data
     test_processed = preprocessor.transform(test_with_rul)
     
-    # Prepare data for classification (discretize RUL into stages)
-    train_classified = prepare_data_for_classification(
-        train_processed, 
-        n_classes=5, 
-        method='equal_width'
-    )
-    
-    # Get important features for prediction
-    important_features = preprocessor.get_important_features(train_processed, top_n=10)
-    print("Top 10 important features:")
-    print(important_features)
-    
-    # Plot sensor trends
-    preprocessor.plot_sensor_trends(train_with_rul, sample_units=3)
-    
-    # Plot degradation stages
-    preprocessor.plot_degradation_stages(train_classified)
-    
-    # Create sequence data for time series modeling
-    feature_cols = important_features.index.tolist()
-    X_seq, y_seq, groups = create_sequence_data(
-        train_classified, 
-        sequence_length=30, 
-        feature_columns=feature_cols,
-        target_column='RUL',
-        step=1
-    )
     
     print(f"Sequence data shape: X={X_seq.shape}, y={y_seq.shape}, groups={groups.shape}")
