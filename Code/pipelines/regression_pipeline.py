@@ -3,9 +3,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from pathlib import Path
 import sys
-import concurrent.futures
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Add Code directory to system path for imports
@@ -22,7 +20,6 @@ class RegressionPipeline:
                  classifier='random_forest', base_path=None, n_jobs=None):
         """
         Initialize the regression pipeline.
-        
         Args:
             datasets: List of dataset names to process
             classifier: The classifier used for stage predictions
@@ -112,15 +109,18 @@ class RegressionPipeline:
         # Drop rows with missing labels (should be rare)
         df = df.dropna(subset=['time_to_next_stage'])
          
-        # Select features (exclude unnecessary columns)
-        exclude_cols = ['time_to_next_stage', 'RUL_quartile', 'degradation_stage', 
-                        'RUL', 'predicted_stage', 'remaining_cycles', 'normalized_RUL',
-                        'cycle_ratio']
-        
-        # Features are all numeric columns except excluded ones
-        feature_cols = [col for col in df.columns if col not in exclude_cols 
-                        and df[col].dtype in ['int64', 'float64']]
-        
+        # Select only essential features and drop any rolling-statistics columns
+        feature_cols = []
+        for col in df.columns:
+            if 'roll' in col:
+                continue
+            if col in ['unit_number', 'time_cycles', 'RUL_quartile', 'degradation_stage']:
+                feature_cols.append(col)
+            elif col.startswith('setting_'):
+                feature_cols.append(col)
+            elif col.startswith('sensor_') and not col.endswith('_diff'):
+                feature_cols.append(col)
+
         X = df[feature_cols].values
         y = df['time_to_next_stage'].values
         
