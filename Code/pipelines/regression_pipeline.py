@@ -151,11 +151,18 @@ class RegressionPipeline:
         train_df = self.load_dataset(dataset, is_train=True)
         test_df = self.load_dataset(dataset, is_train=False)
         # Label preparation
-        X_train, y_train, _, train_df = self.prepare_labels(train_df)
-        X_test, y_test, _, test_df = self.prepare_labels(test_df)
+        X_train, y_train, feature_cols, train_df = self.prepare_labels(train_df)
+        X_test, y_test, feature_cols, test_df = self.prepare_labels(test_df)
         # Save processed
-        train_df.to_csv(os.path.join(dataset_output_path, 'train_with_time_labels.csv'), index=False)
-        test_df.to_csv(os.path.join(dataset_output_path, 'test_with_time_labels.csv'), index=False)
+        core_feature_cols = [
+            col for col in feature_cols if 
+            not any(suffix in col for suffix in ['_cummean', '_cumstd', '_diff'])
+        ]
+        save_cols = core_feature_cols + ['predicted_stage', 'time_to_next_stage']
+        train_df[save_cols].to_csv(
+            os.path.join(dataset_output_path, 'train_with_time_labels.csv'), index=False)
+        test_df[save_cols].to_csv(
+            os.path.join(dataset_output_path, 'test_with_time_labels.csv'), index=False)
         # Model setup
         ridge = RidgeRegression(alpha=1.0)
         rf = RandomForestRegressor(n_estimators=100, max_depth=10)
@@ -172,7 +179,11 @@ class RegressionPipeline:
         # also individual preds
         ind_preds = ensemble.predict_with_individual_models(X_test)
         for name, preds in ind_preds.items(): test_df[f'pred_{name}'] = preds
-        test_df.to_csv(os.path.join(dataset_output_path, 'test_predictions.csv'), index=False)
+        # Save only essential columns in final predictions
+        pred_cols = core_feature_cols + ['predicted_stage', 'time_to_next_stage', 'predicted_time_to_next_stage']
+        pred_cols += [col for col in test_df.columns if col.startswith('pred_') and col not in pred_cols]
+        test_df[pred_cols].to_csv(
+            os.path.join(dataset_output_path, 'test_predictions.csv'), index=False)
         self._create_visualizations(test_df, dataset_output_path, dataset)
         self._create_model_comparison_visualizations(test_df, dataset_output_path, dataset)
         return dataset, metrics
