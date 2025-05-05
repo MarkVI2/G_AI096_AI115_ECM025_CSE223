@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import sys
+import concurrent.futures
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Add Code directory to system path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -17,7 +19,7 @@ from regression.gradient_boosting import HistGradientBoostingRegressor
 
 class RegressionPipeline:
     def __init__(self, datasets=['FD001', 'FD002', 'FD003', 'FD004'], 
-                 classifier='random_forest', base_path=None):
+                 classifier='random_forest', base_path=None, n_jobs=None):
         """
         Initialize the regression pipeline.
         
@@ -25,6 +27,7 @@ class RegressionPipeline:
             datasets: List of dataset names to process
             classifier: The classifier used for stage predictions
             base_path: Base path to the project
+            n_jobs: Number of parallel jobs to run
         """
         self.datasets = datasets
         self.classifier = classifier
@@ -38,6 +41,8 @@ class RegressionPipeline:
         self.base_path = base_path
         self.results_path = os.path.join(base_path, 'results')
         self.output_path = os.path.join(self.results_path, 'regression')
+        # Number of parallel workers
+        self.n_jobs = n_jobs or os.cpu_count()
         
         # Create output directory if it doesn't exist
         os.makedirs(self.output_path, exist_ok=True)
@@ -75,51 +80,38 @@ class RegressionPipeline:
     def prepare_labels(self, df):
         """
         Prepare target labels: time (in cycles) until next stage transition.
-        
-        Args:
-            df: DataFrame with time_cycles and predicted_stage columns
-            
-        Returns:
-            Tuple of (X features, y labels)
         """
         # Sort by unit and time for time series processing
         df = df.sort_values(['unit_number', 'time_cycles'])
-        
         # Initialize the target column
         df['time_to_next_stage'] = np.nan
-        
+        # Determine last stage dynamically
+        max_stage = int(df['predicted_stage'].max())
         # Process each unit separately
         for unit in df['unit_number'].unique():
-            unit_data = df[df['unit_number'] == unit].copy()
-            
-            # For each stage, calculate time to next stage
-            for stage in range(4):  # stages 0, 1, 2, 3
-                stage_data = unit_data[unit_data['predicted_stage'] == stage]
-                
-                if stage_data.empty:
-                    continue
-                    
-                # If this is the last stage (3), use RUL directly
-                if stage == 3:
-                    df.loc[stage_data.index, 'time_to_next_stage'] = stage_data['RUL']
-                    continue
-                
-                # Find the next stage transition point
-                next_stage_start = unit_data[
-                    (unit_data['predicted_stage'] == stage + 1) & 
-                    (unit_data['time_cycles'] > stage_data['time_cycles'].min())
-                ]['time_cycles'].min()
-                
-                if np.isnan(next_stage_start):
-                    # If no next stage found, use RUL
-                    df.loc[stage_data.index, 'time_to_next_stage'] = stage_data['RUL']
+            unit_data = df[df['unit_number'] == unit]
+            # Iterate over each observation
+            for idx, row in unit_data.iterrows():
+                current_stage = int(row['predicted_stage'])
+                # If last stage or beyond, use RUL
+                if current_stage >= max_stage:
+                    time_val = row['RUL']
                 else:
-                    # Calculate cycles until next stage transition
-                    df.loc[stage_data.index, 'time_to_next_stage'] = next_stage_start - stage_data['time_cycles']
-        
+                    # Find next stage start time strictly after this cycle
+                    future = unit_data[
+                        (unit_data['predicted_stage'] == current_stage + 1) &
+                        (unit_data['time_cycles'] > row['time_cycles'])
+                    ]['time_cycles']
+                    if future.empty:
+                        time_val = row['RUL']
+                    else:
+                        next_time = future.min()
+                        time_val = next_time - row['time_cycles']
+                # Ensure no negative time
+                df.at[idx, 'time_to_next_stage'] = max(0, time_val)
         # Drop rows with missing labels (should be rare)
         df = df.dropna(subset=['time_to_next_stage'])
-        
+         
         # Select features (exclude unnecessary columns)
         exclude_cols = ['time_to_next_stage', 'RUL_quartile', 'degradation_stage', 
                         'RUL', 'predicted_stage', 'remaining_cycles', 'normalized_RUL',
@@ -136,64 +128,54 @@ class RegressionPipeline:
     
     def run_pipeline(self):
         """
-        Run the complete regression pipeline for all datasets.
+        Run the complete regression pipeline in parallel across datasets.
         """
-        for dataset in self.datasets:
-            print(f"\nProcessing dataset: {dataset}")
-            
-            # Create dataset output directory
-            dataset_output_path = os.path.join(self.output_path, dataset)
-            os.makedirs(dataset_output_path, exist_ok=True)
-            
-            # Load data
-            train_df = self.load_dataset(dataset, is_train=True)
-            test_df = self.load_dataset(dataset, is_train=False)
-            
-            # Prepare labels
-            X_train, y_train, feature_cols, train_df_with_labels = self.prepare_labels(train_df)
-            X_test, y_test, _, test_df_with_labels = self.prepare_labels(test_df)
-            
-            print(f"Training data shape: {X_train.shape}, Labels shape: {y_train.shape}")
-            print(f"Testing data shape: {X_test.shape}, Labels shape: {y_test.shape}")
-            
-            # Save the processed data with labels
-            train_df_with_labels.to_csv(os.path.join(dataset_output_path, 'train_with_time_labels.csv'), index=False)
-            test_df_with_labels.to_csv(os.path.join(dataset_output_path, 'test_with_time_labels.csv'), index=False)
-            
-            # Initialize base models
-            ridge = RidgeRegression(alpha=1.0)
-            rf = RandomForestRegressor(n_estimators=100, max_depth=10)
-            quantile_reg = QuantileRegressor(quantile=0.5, alpha=0.1)  # Median quantile
-            hist_gbm = HistGradientBoostingRegressor(n_estimators=100, max_depth=5, learning_rate=0.1, max_bins=256)
-            
-            # Train ensemble model with expanded model set
-            ensemble = EnsembleRegressor(base_models=[ridge, rf, quantile_reg, hist_gbm])
-            ensemble.fit(X_train, y_train)
-            
-            # Make predictions
-            y_pred = ensemble.predict(X_test)
-            
-            # Evaluate model
-            evaluator = RegressionEvaluator()
-            metrics = evaluator.evaluate(y_test, y_pred)
-            self.metrics[dataset] = metrics
-            
-            # For additional insights, get individual model predictions
-            individual_preds = ensemble.predict_with_individual_models(X_test)
-            
-            # Save all model predictions for comparison
-            for model_name, preds in individual_preds.items():
-                test_df_with_labels[f'pred_{model_name}'] = preds
-            
-            # Save predictions
-            test_df_with_labels.to_csv(os.path.join(dataset_output_path, 'test_predictions.csv'), index=False)
-            
-            # Create visualizations
-            self._create_visualizations(test_df_with_labels, dataset_output_path, dataset)
-            self._create_model_comparison_visualizations(test_df_with_labels, dataset_output_path, dataset)
-            
-        # Save overall metrics
+        # Use process-based parallelism for CPU-bound training
+        with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
+            futures = {executor.submit(self._process_single, ds): ds for ds in self.datasets}
+            for future in as_completed(futures):
+                dataset, metrics = future.result()
+                self.metrics[dataset] = metrics
+        # Save all metrics after parallel execution
         self._save_metrics()
+
+    def _process_single(self, dataset):
+        """
+        Process a single dataset: load data, prepare labels, train models, evaluate, and save results.
+        Returns dataset name and metrics dict.
+        """
+        print(f"\nProcessing dataset: {dataset}")
+        # Paths and data loading
+        dataset_output_path = os.path.join(self.output_path, dataset)
+        os.makedirs(dataset_output_path, exist_ok=True)
+        train_df = self.load_dataset(dataset, is_train=True)
+        test_df = self.load_dataset(dataset, is_train=False)
+        # Label preparation
+        X_train, y_train, _, train_df = self.prepare_labels(train_df)
+        X_test, y_test, _, test_df = self.prepare_labels(test_df)
+        # Save processed
+        train_df.to_csv(os.path.join(dataset_output_path, 'train_with_time_labels.csv'), index=False)
+        test_df.to_csv(os.path.join(dataset_output_path, 'test_with_time_labels.csv'), index=False)
+        # Model setup
+        ridge = RidgeRegression(alpha=1.0)
+        rf = RandomForestRegressor(n_estimators=100, max_depth=10)
+        quantile_reg = QuantileRegressor(quantile=0.5, alpha=0.1)
+        hist_gbm = HistGradientBoostingRegressor(n_estimators=100, max_depth=5, learning_rate=0.1, max_bins=256)
+        ensemble = EnsembleRegressor(base_models=[ridge, rf, quantile_reg, hist_gbm])
+        ensemble.fit(X_train, y_train)
+        y_pred = ensemble.predict(X_test)
+        # Evaluation
+        evaluator = RegressionEvaluator()
+        metrics = evaluator.evaluate(y_test, y_pred)
+        # Save predictions and visualizations
+        test_df['predicted_time_to_next_stage'] = y_pred
+        # also individual preds
+        ind_preds = ensemble.predict_with_individual_models(X_test)
+        for name, preds in ind_preds.items(): test_df[f'pred_{name}'] = preds
+        test_df.to_csv(os.path.join(dataset_output_path, 'test_predictions.csv'), index=False)
+        self._create_visualizations(test_df, dataset_output_path, dataset)
+        self._create_model_comparison_visualizations(test_df, dataset_output_path, dataset)
+        return dataset, metrics
     
     def _create_visualizations(self, df, output_path, dataset_name):
         """Create visualization for model performance"""
