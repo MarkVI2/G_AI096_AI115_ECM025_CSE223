@@ -1,392 +1,298 @@
-import os, sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from data.loader import CMAPSSDataLoader
-from data.preprocessor import CMAPSSPreprocessor
+import seaborn as sns
+from pathlib import Path
+import sys
+
+# Add Code directory to system path for imports
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from regression.base_models import RidgeRegression, RandomForestRegressor
+from regression.ensemble_regressor import EnsembleRegressor
 from regression.evaluator import RegressionEvaluator
-from regression.base_models import RandomForestRegressorScratch, RidgeRegressionScratch
-from xgboost import XGBRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from regression.quantile import QuantileRegressor
+from regression.gradient_boosting import HistGradientBoostingRegressor
 
 class RegressionPipeline:
-    def __init__(self, data_dir: str, dataset_id: str = "FD001", n_classes: int = 5, n_jobs: int = 1, classification_results=None):
-        self.data_dir = data_dir
-        self.dataset_id = dataset_id
-        self.n_classes = n_classes
-        self.n_jobs = n_jobs
-        # classification_results should be a DataFrame with unit_number, time_cycles, pred_stage
-        self.classification_results = classification_results
-        self.loader = CMAPSSDataLoader(self.data_dir)
-        self.preprocessor = CMAPSSPreprocessor(normalization_method='minmax', scale_per_unit=False)
-        self.evaluator = RegressionEvaluator()
+    def __init__(self, datasets=['FD001', 'FD002', 'FD003', 'FD004'], 
+                 classifier='random_forest', base_path=None):
+        """
+        Initialize the regression pipeline.
         
-        # Initialize regression models
-        self.models = {
-            'RandomForest': RandomForestRegressorScratch(
-                n_estimators=50,
-                max_depth=5,
-                subsample=0.8,
-                random_state=42
-            ),
-            'Ridge': RidgeRegressionScratch(alpha=1.0),
-        }
-
-    def load_and_preprocess(self):
-        # Load and preprocess train/test with RUL and features
-        data = self.loader.load_dataset(self.dataset_id)
-        train_df = self.loader.calculate_rul_for_training(self.dataset_id)
-        test_df = self.loader.prepare_test_with_rul(self.dataset_id)
+        Args:
+            datasets: List of dataset names to process
+            classifier: The classifier used for stage predictions
+            base_path: Base path to the project
+        """
+        self.datasets = datasets
+        self.classifier = classifier
         
-        # Feature engineering
-        train_proc = self.preprocessor.fit_transform(train_df, add_remaining_features=True, add_sensor_diff=True)
-        test_proc = self.preprocessor.transform(test_df, add_remaining_features=True, add_sensor_diff=True)
+        if base_path is None:
+            # Try to determine the base path automatically
+            current_file = os.path.abspath(__file__)
+            # Navigate up to the project root
+            base_path = os.path.dirname(os.path.dirname(current_file))
         
-        # Assign degradation stage from classification if provided, else discretize RUL
-        if self.classification_results is not None:
-            # merge predicted stage into processed data
-            preds = self.classification_results[['unit_number','time_cycles','pred_stage']]
-            train_proc = train_proc.merge(preds, on=['unit_number','time_cycles'], how='left')
-            test_proc = test_proc.merge(preds, on=['unit_number','time_cycles'], how='left')
-            train_proc['stage'] = train_proc['pred_stage']
-            test_proc['stage'] = test_proc['pred_stage']
-        else:
-            train_proc['stage'] = pd.cut(train_proc['RUL'], bins=self.n_classes, labels=False, include_lowest=True)
-            test_proc['stage'] = pd.cut(test_proc['RUL'], bins=self.n_classes, labels=False, include_lowest=True)
+        self.base_path = base_path
+        self.results_path = os.path.join(base_path, 'results')
+        self.output_path = os.path.join(self.results_path, 'regression')
         
-        # Compute time to next stage
-        def compute_ttns(df):
-            df_sorted = df.sort_values(['unit_number','time_cycles'])
-            targets = []
-            for unit, grp in df_sorted.groupby('unit_number'):
-                cycles = grp['time_cycles'].values
-                stages = grp['stage'].values
-                n = len(cycles)
-                unit_t = np.full(n, np.nan)
-                for i in range(n):
-                    # Find next higher stage after current point
-                    idx = np.where(stages > stages[i])[0]
-                    idx = idx[idx > i]
-                    if idx.size:
-                        unit_t[i] = cycles[idx[0]] - cycles[i]
-                    else:
-                        # If no higher stage exists, use RUL as target
-                        # This handles the last stage points
-                        unit_t[i] = grp['RUL'].values[i]
-                targets.extend(unit_t)
-            return np.array(targets)
-            
-        print("Computing time-to-next-stage targets...")
-        train_proc['target'] = compute_ttns(train_proc)
-        test_proc['target'] = compute_ttns(test_proc)
+        # Create output directory if it doesn't exist
+        os.makedirs(self.output_path, exist_ok=True)
         
-        # Feature engineering: compute rolling-window stats and slopes in batch to avoid fragmentation
-        sensor_cols = [c for c in train_proc.columns if c.startswith('sensor')]
-        train_feats = []
-        test_feats = []
-        for window in [5, 10]:
-            grp_train = train_proc.groupby('unit_number')
-            grp_test = test_proc.groupby('unit_number')
-            for col in sensor_cols:
-                ma = grp_train[col].rolling(window).mean().reset_index(level=0, drop=True)
-                test_ma = grp_test[col].rolling(window).mean().reset_index(level=0, drop=True)
-                std = grp_train[col].rolling(window).std().reset_index(level=0, drop=True)
-                test_std = grp_test[col].rolling(window).std().reset_index(level=0, drop=True)
-                slope = grp_train[col].rolling(window).apply(lambda x: np.polyfit(np.arange(len(x)), x, 1)[0], raw=True).reset_index(level=0, drop=True)
-                test_slope = grp_test[col].rolling(window).apply(lambda x: np.polyfit(np.arange(len(x)), x, 1)[0], raw=True).reset_index(level=0, drop=True)
-                train_feats.append(pd.DataFrame({f"{col}_ma{window}": ma, f"{col}_std{window}": std, f"{col}_slope{window}": slope}))
-                test_feats.append(pd.DataFrame({f"{col}_ma{window}": test_ma, f"{col}_std{window}": test_std, f"{col}_slope{window}": test_slope}))
-        train_proc = pd.concat([train_proc] + train_feats, axis=1)
-        test_proc = pd.concat([test_proc] + test_feats, axis=1)
+        # Initialize evaluation metrics storage
+        self.metrics = {}
+    
+    def load_dataset(self, dataset, is_train=True):
+        """
+        Load a specific dataset with stage predictions.
         
-        # Drop original less useful features
-        drop_cols = ['unit_number','time_cycles','RUL','stage','target']
-        feature_cols = [c for c in train_proc.columns if c not in drop_cols]
-        # Remove constant features
-        feature_cols = [c for c in feature_cols if train_proc[c].nunique() > 1]
-        # Drop rows with NaN in features or target (from rolling windows)
-        train_proc = train_proc.dropna(subset=feature_cols + ['target'])
-        test_proc = test_proc.dropna(subset=feature_cols + ['target'])
-
-        print(f"Dataset prepared: {len(train_proc)} train samples, {len(test_proc)} test samples")
-        print(f"Using {len(feature_cols)} features for regression")
+        Args:
+            dataset: Dataset name (e.g., 'FD001')
+            is_train: Whether to load training or test data
         
-        self.X_train = train_proc[feature_cols].values
-        self.y_train = train_proc['target'].values
-        self.X_test = test_proc[feature_cols].values
-        self.y_test = test_proc['target'].values
-        
-        # Save metadata for visualization
-        self.train_metadata = train_proc[['unit_number', 'time_cycles', 'RUL', 'stage']]
-        self.test_metadata = test_proc[['unit_number', 'time_cycles', 'RUL', 'stage']]
-        self.feature_names = feature_cols
-        
-        return self
-
-    def train(self):
-        # Train regression models, including XGBoost
-        # Prepare DataFrame for XGBoost
-        X_df = pd.DataFrame(self.X_train, columns=self.feature_names)
-        # Configure and train XGBoost on full training data (no early stopping)
-        print("Training XGBoost...")
-        xgb = XGBRegressor(
-            n_estimators=100,
-            learning_rate=0.05,
-            max_depth=7,
-            random_state=42,
-            n_jobs=self.n_jobs,
-            verbosity=0
+        Returns:
+            Pandas DataFrame with the loaded data
+        """
+        file_type = 'train' if is_train else 'test'
+        file_path = os.path.join(
+            self.results_path, 
+            'classification', 
+            dataset, 
+            self.classifier,
+            f'{file_type}_with_preds.csv'
         )
-        xgb.fit(X_df, self.y_train)
-        self.models['XGBoost'] = xgb
-        # Train RF and Ridge on full training data
-        for name in ['RandomForest', 'Ridge']:
-            print(f"Training {name} on full data...")
-            self.models[name].fit(self.X_train, self.y_train)
-        return self
-
-    def evaluate(self):
-        # Evaluate and report each model's performance
-        results = {}
-        for name, model in self.models.items():
-            # Predict using numpy arrays for compatibility with all models
-            y_pred = model.predict(self.X_test)
-            mae = mean_absolute_error(self.y_test, y_pred)
-            rmse = np.sqrt(mean_squared_error(self.y_test, y_pred))
-            r2 = r2_score(self.y_test, y_pred)
-            results[name] = {'MAE': mae, 'RMSE': rmse, 'R2': r2}
-        return results
-
-    def run(self):
-        self.load_and_preprocess()
-        self.train()
-        return self.evaluate()
-
-
-def run_regression(data_path: str, classification_results=None, n_jobs=1):
-    """
-    Runs the regression pipeline for Phase 3 (Time-to-Next-Failure Prediction)
-    
-    Args:
-        data_path: Path to CMAPSS dataset
-        classification_results: Optional classification results from phase 2
-        n_jobs: Number of parallel jobs to use
-    """
-    pipeline = RegressionPipeline(data_dir=data_path, n_jobs=n_jobs, classification_results=classification_results)
-    metrics = pipeline.run()
-    
-    # Print metrics
-    print("\n=== Regression Model Results (Time-to-Next-Stage Prediction) ===")
-    for model, scores in metrics.items():
-        print(f"\n{model} Performance:")
-        print(f"  MAE: {scores['MAE']:.2f} cycles")
-        print(f"  RMSE: {scores['RMSE']:.2f} cycles")
-        print(f"  R²: {scores['R2']:.4f}")
-    
-    # Generate and save regression plots
-    results_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'results', 'regression')
-    os.makedirs(results_dir, exist_ok=True)
-    # Scatter plots: actual vs predicted for each model
-    for name, model in pipeline.models.items():
-        # Predict with numpy array input
-        y_pred = model.predict(pipeline.X_test)
-        plt.figure(figsize=(8,6))
-        plt.scatter(pipeline.y_test, y_pred, alpha=0.5, edgecolors='k', linewidths=0.5)
-        maxval = max(pipeline.y_test.max(), y_pred.max())
-        plt.plot([0, maxval], [0, maxval], 'r--', linewidth=1)
-        plt.xlabel('Actual Time to Next Stage')
-        plt.ylabel('Predicted Time to Next Stage')
-        plt.title(f'{name}: Actual vs Predicted')
-        plt.tight_layout()
-        plt.savefig(os.path.join(results_dir, f'{name}_actual_vs_predicted.png'))
-        plt.close()
-    # Bar chart of metrics
-    # Prepare DataFrame
-    import pandas as _pd
-    df = _pd.DataFrame(metrics).T
-    plt.figure(figsize=(8,6))
-    df[['R2', 'RMSE']].plot(kind='bar', ax=plt.gca())
-    plt.title('Regression Performance (R2 and RMSE)')
-    plt.ylabel('Score')
-    plt.tight_layout()
-    plt.savefig(os.path.join(results_dir, 'performance_summary.png'))
-    plt.close()
-    print(f"\nRegression visualizations saved to {results_dir}")
-    # Save detailed predictions for all models
-    preds_df = pipeline.test_metadata.copy()
-    preds_df['true_time_to_next_stage'] = pipeline.y_test
-    for name, model in pipeline.models.items():
-        preds_df[f'pred_{name}'] = model.predict(pipeline.X_test)
-    preds_df.to_csv(os.path.join(results_dir, 'time_to_next_stage_predictions.csv'), index=False)
-    return metrics
-
-
-def run_regression_fast(data_path: str, classification_results=None, n_jobs=1, sample_size=5000):
-    """
-    Fast version of regression pipeline that:
-    1. Uses a random sample of training data (default 5000 samples)
-    2. Reduces SVR training iterations
-    3. Skips weighted ensemble which requires retraining
-    4. Samples test data for faster evaluation
-    
-    Args:
-        data_path: Path to CMAPSS dataset
-        classification_results: Optional classification results from phase 2
-        n_jobs: Number of parallel jobs to use
-        sample_size: Number of samples to use for training (smaller = faster)
-    """
-    print(f"Running fast regression pipeline (using {sample_size} samples)...")
-    
-    # Import necessary modules
-    import os, sys
-    import numpy as np
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    from data.loader import CMAPSSDataLoader
-    from data.preprocessor import CMAPSSPreprocessor
-    from regression.evaluator import RegressionEvaluator
-    from regression.base_models import RandomForestRegressorScratch, RidgeRegressionScratch
-    from sklearn.ensemble import HistGradientBoostingRegressor
-    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-    import time
-    
-    # Track execution time
-    start_time = time.time()
-    
-    # Set up components
-    loader = CMAPSSDataLoader(data_path)
-    preprocessor = CMAPSSPreprocessor(normalization_method='minmax', scale_per_unit=False)
-    evaluator = RegressionEvaluator()
-    
-    # Load and preprocess data
-    print("Loading and preprocessing data...")
-    loader.load_dataset("FD001")  # Use dataset FD001 for speed
-    train_df = loader.calculate_rul_for_training("FD001")
-    test_df = loader.prepare_test_with_rul("FD001")
-    
-    # Feature engineering (same as original pipeline)
-    train_proc = preprocessor.fit_transform(train_df, add_remaining_features=True, add_sensor_diff=True)
-    test_proc = preprocessor.transform(test_df, add_remaining_features=True, add_sensor_diff=True)
-    
-    # Discretize stages for target computation
-    n_classes = 5  # 5 degradation stages
-    train_proc['stage'] = pd.cut(train_proc['RUL'], bins=n_classes, labels=False, include_lowest=True)
-    test_proc['stage'] = pd.cut(test_proc['RUL'], bins=n_classes, labels=False, include_lowest=True)
-    
-    # Compute time to next stage
-    print("Computing time-to-next-stage targets...")
-    def compute_ttns(df):
-        df_sorted = df.sort_values(['unit_number','time_cycles'])
-        targets = []
-        for unit, grp in df_sorted.groupby('unit_number'):
-            cycles = grp['time_cycles'].values
-            stages = grp['stage'].values
-            n = len(cycles)
-            unit_t = np.full(n, np.nan)
-            for i in range(n):
-                # Find next higher stage after current point
-                idx = np.where(stages > stages[i])[0]
-                idx = idx[idx > i]
-                if idx.size:
-                    unit_t[i] = cycles[idx[0]] - cycles[i]
-                else:
-                    # If no higher stage exists, use RUL as target
-                    unit_t[i] = grp['RUL'].values[i]
-            targets.extend(unit_t)
-        return np.array(targets)
         
-    train_proc['target'] = compute_ttns(train_proc)
-    test_proc['target'] = compute_ttns(test_proc)
+        print(f"Loading {file_path}")
+        
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Data file not found: {file_path}")
+            
+        return pd.read_csv(file_path)
     
-    # Select features
-    drop_cols = ['unit_number','time_cycles','RUL','stage','target']
-    feature_cols = [c for c in train_proc.columns if c not in drop_cols]
+    def prepare_labels(self, df):
+        """
+        Prepare target labels: time (in cycles) until next stage transition.
+        
+        Args:
+            df: DataFrame with time_cycles and predicted_stage columns
+            
+        Returns:
+            Tuple of (X features, y labels)
+        """
+        # Sort by unit and time for time series processing
+        df = df.sort_values(['unit_number', 'time_cycles'])
+        
+        # Initialize the target column
+        df['time_to_next_stage'] = np.nan
+        
+        # Process each unit separately
+        for unit in df['unit_number'].unique():
+            unit_data = df[df['unit_number'] == unit].copy()
+            
+            # For each stage, calculate time to next stage
+            for stage in range(4):  # stages 0, 1, 2, 3
+                stage_data = unit_data[unit_data['predicted_stage'] == stage]
+                
+                if stage_data.empty:
+                    continue
+                    
+                # If this is the last stage (3), use RUL directly
+                if stage == 3:
+                    df.loc[stage_data.index, 'time_to_next_stage'] = stage_data['RUL']
+                    continue
+                
+                # Find the next stage transition point
+                next_stage_start = unit_data[
+                    (unit_data['predicted_stage'] == stage + 1) & 
+                    (unit_data['time_cycles'] > stage_data['time_cycles'].min())
+                ]['time_cycles'].min()
+                
+                if np.isnan(next_stage_start):
+                    # If no next stage found, use RUL
+                    df.loc[stage_data.index, 'time_to_next_stage'] = stage_data['RUL']
+                else:
+                    # Calculate cycles until next stage transition
+                    df.loc[stage_data.index, 'time_to_next_stage'] = next_stage_start - stage_data['time_cycles']
+        
+        # Drop rows with missing labels (should be rare)
+        df = df.dropna(subset=['time_to_next_stage'])
+        
+        # Select features (exclude unnecessary columns)
+        exclude_cols = ['time_to_next_stage', 'RUL_quartile', 'degradation_stage', 
+                        'RUL', 'predicted_stage', 'remaining_cycles', 'normalized_RUL',
+                        'cycle_ratio']
+        
+        # Features are all numeric columns except excluded ones
+        feature_cols = [col for col in df.columns if col not in exclude_cols 
+                        and df[col].dtype in ['int64', 'float64']]
+        
+        X = df[feature_cols].values
+        y = df['time_to_next_stage'].values
+        
+        return X, y, feature_cols, df
     
-    # Prepare training and test datasets
-    X_train_full = train_proc[feature_cols].values
-    y_train_full = train_proc['target'].values
-    X_test_full = test_proc[feature_cols].values
-    y_test_full = test_proc['target'].values
+    def run_pipeline(self):
+        """
+        Run the complete regression pipeline for all datasets.
+        """
+        for dataset in self.datasets:
+            print(f"\nProcessing dataset: {dataset}")
+            
+            # Create dataset output directory
+            dataset_output_path = os.path.join(self.output_path, dataset)
+            os.makedirs(dataset_output_path, exist_ok=True)
+            
+            # Load data
+            train_df = self.load_dataset(dataset, is_train=True)
+            test_df = self.load_dataset(dataset, is_train=False)
+            
+            # Prepare labels
+            X_train, y_train, feature_cols, train_df_with_labels = self.prepare_labels(train_df)
+            X_test, y_test, _, test_df_with_labels = self.prepare_labels(test_df)
+            
+            print(f"Training data shape: {X_train.shape}, Labels shape: {y_train.shape}")
+            print(f"Testing data shape: {X_test.shape}, Labels shape: {y_test.shape}")
+            
+            # Save the processed data with labels
+            train_df_with_labels.to_csv(os.path.join(dataset_output_path, 'train_with_time_labels.csv'), index=False)
+            test_df_with_labels.to_csv(os.path.join(dataset_output_path, 'test_with_time_labels.csv'), index=False)
+            
+            # Initialize base models
+            ridge = RidgeRegression(alpha=1.0)
+            rf = RandomForestRegressor(n_estimators=100, max_depth=10)
+            quantile_reg = QuantileRegressor(quantile=0.5, alpha=0.1)  # Median quantile
+            hist_gbm = HistGradientBoostingRegressor(n_estimators=100, max_depth=5, learning_rate=0.1, max_bins=256)
+            
+            # Train ensemble model with expanded model set
+            ensemble = EnsembleRegressor(base_models=[ridge, rf, quantile_reg, hist_gbm])
+            ensemble.fit(X_train, y_train)
+            
+            # Make predictions
+            y_pred = ensemble.predict(X_test)
+            
+            # Evaluate model
+            evaluator = RegressionEvaluator()
+            metrics = evaluator.evaluate(y_test, y_pred)
+            self.metrics[dataset] = metrics
+            
+            # For additional insights, get individual model predictions
+            individual_preds = ensemble.predict_with_individual_models(X_test)
+            
+            # Save all model predictions for comparison
+            for model_name, preds in individual_preds.items():
+                test_df_with_labels[f'pred_{model_name}'] = preds
+            
+            # Save predictions
+            test_df_with_labels.to_csv(os.path.join(dataset_output_path, 'test_predictions.csv'), index=False)
+            
+            # Create visualizations
+            self._create_visualizations(test_df_with_labels, dataset_output_path, dataset)
+            self._create_model_comparison_visualizations(test_df_with_labels, dataset_output_path, dataset)
+            
+        # Save overall metrics
+        self._save_metrics()
     
-    # Sample training data for faster processing
-    if len(X_train_full) > sample_size:
-        print(f"Sampling {sample_size} points from {len(X_train_full)} training samples")
-        indices = np.random.choice(len(X_train_full), sample_size, replace=False)
-        X_train = X_train_full[indices]
-        y_train = y_train_full[indices]
-    else:
-        X_train = X_train_full
-        y_train = y_train_full
+    def _create_visualizations(self, df, output_path, dataset_name):
+        """Create visualization for model performance"""
+        
+        # Actual vs Predicted plot
+        plt.figure(figsize=(10, 6))
+        plt.scatter(df['time_to_next_stage'], df['predicted_time_to_next_stage'], alpha=0.5)
+        
+        # Add diagonal line (perfect predictions)
+        max_val = max(df['time_to_next_stage'].max(), df['predicted_time_to_next_stage'].max())
+        plt.plot([0, max_val], [0, max_val], 'r--')
+        
+        plt.title(f'Actual vs Predicted Time to Next Stage - {dataset_name}')
+        plt.xlabel('Actual Time to Next Stage (cycles)')
+        plt.ylabel('Predicted Time to Next Stage (cycles)')
+        plt.grid(True, alpha=0.3)
+        plt.savefig(os.path.join(output_path, 'actual_vs_predicted.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Error distribution
+        errors = df['predicted_time_to_next_stage'] - df['time_to_next_stage']
+        plt.figure(figsize=(10, 6))
+        sns.histplot(errors, kde=True)
+        plt.title(f'Error Distribution - {dataset_name}')
+        plt.xlabel('Prediction Error (cycles)')
+        plt.ylabel('Frequency')
+        plt.grid(True, alpha=0.3)
+        plt.savefig(os.path.join(output_path, 'error_distribution.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Error by stage
+        plt.figure(figsize=(10, 6))
+        sns.boxplot(x='predicted_stage', y=errors, data=df)
+        plt.title(f'Error Distribution by Stage - {dataset_name}')
+        plt.xlabel('Degradation Stage')
+        plt.ylabel('Prediction Error (cycles)')
+        plt.grid(True, alpha=0.3)
+        plt.savefig(os.path.join(output_path, 'error_by_stage.png'), dpi=300, bbox_inches='tight')
+        plt.close()
     
-    # Sample test data for faster evaluation
-    test_sample_size = min(2000, len(X_test_full))
-    test_indices = np.random.choice(len(X_test_full), test_sample_size, replace=False)
-    X_test = X_test_full[test_indices]
-    y_test = y_test_full[test_indices]
+    def _create_model_comparison_visualizations(self, df, output_path, dataset_name):
+        """Create visualizations comparing performance of different models"""
+        
+        # Get model columns
+        model_cols = [col for col in df.columns if col.startswith('pred_')]
+        
+        if len(model_cols) > 1:  # Only create comparison if we have multiple models
+            # Compare RMSE across models
+            model_metrics = {}
+            
+            for col in model_cols:
+                model_name = col.replace('pred_', '')
+                rmse = np.sqrt(np.mean((df[col] - df['time_to_next_stage'])**2))
+                model_metrics[model_name] = {'RMSE': rmse}
+            
+            # Create bar chart of model performance
+            metrics_df = pd.DataFrame(model_metrics).T
+            
+            plt.figure(figsize=(10, 6))
+            metrics_df['RMSE'].plot(kind='bar', color='skyblue')
+            plt.title(f'Model Comparison - {dataset_name}')
+            plt.ylabel('RMSE (lower is better)')
+            plt.grid(True, alpha=0.3)
+            plt.savefig(os.path.join(output_path, 'model_comparison.png'), dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # Create scatter plot matrix for predictions from each model
+            # This can be helpful to see how models differ in their predictions
+            cols_to_plot = ['time_to_next_stage'] + model_cols
+            plot_df = df[cols_to_plot].sample(min(500, len(df)))  # Sample to avoid overcrowding
+            
+            # Pairplot if we have 5 or fewer models (becomes unreadable otherwise)
+            if len(cols_to_plot) <= 6:  
+                sns.pairplot(plot_df, height=2.5)
+                plt.suptitle(f'Model Predictions Comparison - {dataset_name}', y=1.02)
+                plt.savefig(os.path.join(output_path, 'model_predictions_comparison.png'), 
+                           dpi=300, bbox_inches='tight')
+                plt.close()
     
-    print(f"Training with {len(X_train)} samples, evaluating on {len(X_test)} samples")
-    print(f"Using {len(feature_cols)} features")
-    
-    # Initialize models with faster configurations
-    models = {
-        'RandomForest': RandomForestRegressorScratch(
-            n_estimators=20,  # Reduced from 50
-            max_depth=5,
-            subsample=0.8,
-            random_state=42
-        ),
-        'Ridge': RidgeRegressionScratch(alpha=1.0),
-        'GBR': HistGradientBoostingRegressor(max_iter=200, random_state=42)  # Reduced iterations
-    }
-    
-    # Train individual models
-    print("Training models...")
-    for name, model in models.items():
-        print(f"Training {name}...")
-        model.fit(X_train, y_train)
-    
-    # Evaluate on sampled test set
-    print("Evaluating models...")
-    results = {}
-    
-    # Evaluate individual models
-    for name, model in models.items():
-        y_pred = model.predict(X_test)
-        mae = mean_absolute_error(y_test, y_pred)
-        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-        r2 = r2_score(y_test, y_pred)
-        results[name] = {'MAE': mae, 'RMSE': rmse, 'R2': r2}
-    
-    # Generate a simple scatter plot of predictions vs actual
-    plt.figure(figsize=(10, 8))
-    plt.scatter(y_test, y_pred, alpha=0.5, edgecolors='k', linewidth=0.5)
-    
-    # Add diagonal reference line
-    max_val = max(np.max(y_test), np.max(y_pred))
-    plt.plot([0, max_val], [0, max_val], 'r--')
-    
-    plt.xlabel('Actual Time to Next Stage')
-    plt.ylabel('Predicted Time to Next Stage')
-    plt.title('Actual vs Predicted Time-to-Next-Stage')
-    plt.grid(True, alpha=0.3)
-    
-    # Save figure
-    results_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'results', 'regression')
-    os.makedirs(results_dir, exist_ok=True)
-    plt.savefig(os.path.join(results_dir, 'actual_vs_predicted_fast.png'))
-    plt.close()
-    
-    # Print metrics
-    print("\n=== Regression Model Results (Fast Version) ===")
-    for model, scores in results.items():
-        print(f"\n{model} Performance:")
-        print(f"  MAE: {scores['MAE']:.2f} cycles")
-        print(f"  RMSE: {scores['RMSE']:.2f} cycles")
-        print(f"  R²: {scores['R2']:.4f}")
-    
-    # Print execution time
-    elapsed_time = time.time() - start_time
-    print(f"\nExecution time: {elapsed_time:.2f} seconds")
-    
-    return results
+    def _save_metrics(self):
+        """Save all evaluation metrics to a CSV file"""
+        metrics_df = pd.DataFrame(self.metrics).T
+        metrics_df.index.name = 'Dataset'
+        metrics_df.to_csv(os.path.join(self.output_path, 'regression_metrics.csv'))
+        
+        # Create summary plot
+        plt.figure(figsize=(12, 6))
+        metrics_df[['RMSE', 'MAE']].plot(kind='bar')
+        plt.title('Regression Performance Metrics')
+        plt.ylabel('Error (cycles)')
+        plt.grid(True, alpha=0.3)
+        plt.savefig(os.path.join(self.output_path, 'performance_summary.png'), 
+                   dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print("\nRegression metrics summary:")
+        print(metrics_df)
+
+if __name__ == "__main__":
+    # Run the pipeline
+    pipeline = RegressionPipeline()
+    pipeline.run_pipeline()
