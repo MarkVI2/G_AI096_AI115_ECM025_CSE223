@@ -206,26 +206,101 @@ class RegressionPipeline:
         plt.savefig(os.path.join(output_path, 'actual_vs_predicted.png'), dpi=300, bbox_inches='tight')
         plt.close()
         
-        # Error distribution
-        errors = df['predicted_time_to_next_stage'] - df['time_to_next_stage']
+        # Error distribution - include both directional and absolute error
+        errors = df['time_to_next_stage'] - df['predicted_time_to_next_stage']
+        abs_errors = np.abs(errors)
+        
+        # Original directional error distribution
         plt.figure(figsize=(10, 6))
         sns.histplot(errors, kde=True)
-        plt.title(f'Error Distribution - {dataset_name}')
-        plt.xlabel('Prediction Error (cycles)')
+        plt.title(f'Error Distribution (Directional) - {dataset_name}')
+        plt.xlabel('Prediction Error (Actual - Predicted) (cycles)')
         plt.ylabel('Frequency')
         plt.grid(True, alpha=0.3)
-        plt.savefig(os.path.join(output_path, 'error_distribution.png'), dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(output_path, 'error_distribution_directional.png'), dpi=300, bbox_inches='tight')
         plt.close()
         
-        # Error by stage
+        # Absolute error distribution
+        plt.figure(figsize=(10, 6))
+        sns.histplot(abs_errors, kde=True)
+        plt.title(f'Absolute Error Distribution - {dataset_name}')
+        plt.xlabel('Absolute Prediction Error |Actual - Predicted| (cycles)')
+        plt.ylabel('Frequency')
+        plt.grid(True, alpha=0.3)
+        plt.savefig(os.path.join(output_path, 'error_distribution_absolute.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Error by stage - also include absolute error
         plt.figure(figsize=(10, 6))
         sns.boxplot(x='predicted_stage', y=errors, data=df)
-        plt.title(f'Error Distribution by Stage - {dataset_name}')
+        plt.title(f'Error Distribution by Stage (Directional) - {dataset_name}')
         plt.xlabel('Degradation Stage')
-        plt.ylabel('Prediction Error (cycles)')
+        plt.ylabel('Prediction Error (Actual - Predicted) (cycles)')
         plt.grid(True, alpha=0.3)
-        plt.savefig(os.path.join(output_path, 'error_by_stage.png'), dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(output_path, 'error_by_stage_directional.png'), dpi=300, bbox_inches='tight')
         plt.close()
+        
+        # Absolute error by stage
+        plt.figure(figsize=(10, 6))
+        sns.boxplot(x='predicted_stage', y=abs_errors, data=df)
+        plt.title(f'Absolute Error Distribution by Stage - {dataset_name}')
+        plt.xlabel('Degradation Stage')
+        plt.ylabel('Absolute Prediction Error |Actual - Predicted| (cycles)')
+        plt.grid(True, alpha=0.3)
+        plt.savefig(os.path.join(output_path, 'error_by_stage_absolute.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Save per-stage metrics
+        stage_metrics = {}
+        for stage in sorted(df['predicted_stage'].unique()):
+            stage_df = df[df['predicted_stage'] == stage]
+            stage_y_true = stage_df['time_to_next_stage']
+            stage_y_pred = stage_df['predicted_time_to_next_stage']
+            
+            # Calculate metrics
+            mse = np.mean((stage_y_true - stage_y_pred) ** 2)
+            rmse = np.sqrt(mse)
+            mae = np.mean(np.abs(stage_y_true - stage_y_pred))
+            # R2 calculation
+            ss_tot = np.sum((stage_y_true - np.mean(stage_y_true)) ** 2)
+            ss_res = np.sum((stage_y_true - stage_y_pred) ** 2)
+            r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+            
+            stage_metrics[f'Stage_{stage}'] = {
+                'MSE': mse,
+                'RMSE': rmse,
+                'MAE': mae,
+                'R2': r2,
+                'Count': len(stage_df)
+            }
+        
+        # Create and save per-stage metrics DataFrame
+        stage_metrics_df = pd.DataFrame(stage_metrics).T
+        stage_metrics_df.index.name = 'Stage'
+        stage_metrics_df.to_csv(os.path.join(output_path, 'stage_metrics.csv'))
+        
+        # Calculate overall metrics and save them
+        y_true = df['time_to_next_stage']
+        y_pred = df['predicted_time_to_next_stage']
+        overall_mse = np.mean((y_true - y_pred) ** 2)
+        overall_rmse = np.sqrt(overall_mse)
+        overall_mae = np.mean(np.abs(y_true - y_pred))
+        ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+        ss_res = np.sum((y_true - y_pred) ** 2)
+        overall_r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+        
+        overall_metrics = {
+            'Overall': {
+                'MSE': overall_mse,
+                'RMSE': overall_rmse,
+                'MAE': overall_mae,
+                'R2': overall_r2,
+                'Count': len(df)
+            }
+        }
+        
+        overall_df = pd.DataFrame(overall_metrics).T
+        overall_df.to_csv(os.path.join(output_path, 'overall_metrics.csv'))
     
     def _create_model_comparison_visualizations(self, df, output_path, dataset_name):
         """Create visualizations comparing performance of different models"""
