@@ -49,10 +49,10 @@ p3-project/
 │   │
 │   ├── regression/
 │   │   ├── __init__.py
-│   │   ├── base_models.py       # Individual regressor implementations
+│   │   ├── base_models.py       # Base regressor implementations (Ridge, RandomForest)
 │   │   ├── ensemble_regressor.py # Combined regression approach
 │   │   ├── evaluator.py         # Regression metrics and evaluation
-│   │   ├── gradient_boosting.py # Gradient boosting implementation
+│   │   ├── gradient_boosting.py # Histogram Gradient Boosting implementation
 │   │   └── quantile.py          # Quantile regression for uncertainty
 │   │
 │   ├── results/
@@ -97,7 +97,7 @@ Classification Pipeline (Phase 2):
 pipelines/classification_pipeline → classification/base_model → classification/smote → classification/evaluator
 
 Regression Pipeline (Phase 3):
-pipelines/regression_pipeline → regression/base_models → regression/ensemble_regressor → regression/evaluator
+pipelines/regression_pipeline → regression/base_models → regression/ensemble_regressor → regression/quantile → regression/gradient_boosting → regression/evaluator
 
 Risk Assessment Pipeline (Phase 4):
 pipelines/risk_pipeline → risk/scoring → risk/thresholds → visualisation/risk_dashboard

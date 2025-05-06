@@ -10,6 +10,37 @@ NASA CMAPSS Turbofan Engine dataset. The approach combines clustering,
 classification, and regression techniques to provide a comprehensive health
 monitoring and failure prediction system.
 
+## Project Contributions
+
+- **Atharv Ashish Garg (SE23UCSE223)** - Core implementation of machine learning
+  models:
+
+  - Developed classification models and base implementations
+  - Implemented regression algorithms (ensemble, quantile, gradient boosting)
+  - Designed and implemented clustering algorithms
+  - Created the pipeline architecture for model integration
+
+- **Shrivatsh Kuppu Subramaniam (SE23UARI115)** - Data engineering and
+  preprocessing:
+
+  - Designed data sanitization methods
+  - Implemented feature engineering pipelines
+  - Created preprocessing transformations
+  - Handled data injection and transformation logic
+
+- **Pranav Dubey (SE23UARI096)** - Risk analysis and visualization:
+
+  - Developed risk assessment methodologies
+  - Created visualization frameworks for results interpretation
+  - Implemented visual inspection tools
+  - Enhanced project presentation quality
+
+- **Janaki (SE23UECM025)** - Risk analytics and UI/UX enhancement:
+  - Contributed to risk analysis algorithms
+  - Created visual dashboards for maintenance decision-making
+  - Worked on project aesthetics and presentation
+  - Enhanced overall user experience and result interpretation
+
 ## Implementation Plan
 
 The implementation is divided into four distinct phases:
@@ -30,9 +61,8 @@ The implementation is divided into four distinct phases:
 
 - Uses the cluster‑labeled data (from Phase 1) as ground truth labels
 - Trains a meta‑classifier framework on engine data features
-- Employs XGBoost as the primary classifier, enhanced with ensemble stacking
+- Employs Random Forest as the primary classifier
 - Predicts the current degradation stage (0 to 4) for each time cycle
-- Outputs both class predictions and probability estimates per stage
 - Uses both training and test datasets (cluster labels on test set are generated
   via the clustering pipeline) for training and evaluation
 
@@ -42,107 +72,16 @@ The implementation is divided into four distinct phases:
 - Implements an ensemble of regression models:
   - Random Forest Regressor
   - Ridge Regression
-  - Support Vector Regression (SVR)
-  - Gradient Boosting Regressor
+  - Quantile Regression
+  - Histogram Gradient Boosting Regressor
 - Provides quantile-based uncertainty estimates
 
 ### Phase 4: Risk Score Computation and Decision Logic
 
-- Computes risk score using the formula: Risk Score = Failure Probability ×
-  (1/Time Left to Failure)
-- Extracts failure probability from the classifier (probability of Stage 4)
-- Uses regression output for estimated time left until failure
+- Computes risk score based on current degradation stage and estimated time to
+  next stage
+- Uses regression output for estimated time left until next stage transition
 - Creates a normalized risk score for maintenance decision-making
-
-## Current Project Structure
-
-```
-G_AI096_AI115_ECM025_CSE223/
-│
-├── Code/
-│   ├── cache/               # Cached model outputs and intermediate results
-│   │   └── classification/  # Classification model cache
-│   │
-│   ├── classification/      # Classification model implementation
-│   │   ├── __init__.py
-│   │   ├── base_model.py    # Base classifier implementation
-│   │   ├── evaluator.py     # Classification evaluation metrics
-│   │   └── smote.py         # SMOTE implementation for handling imbalanced data
-│   │
-│   ├── clustering/          # Clustering implementation
-│   │   ├── __init__.py
-│   │   ├── hierarchical.py  # Hierarchical Agglomerative Clustering
-│   │   └── visualization.py # Cluster visualization utilities
-│   │
-│   ├── config/              # Configuration parameters
-│   │   ├── __init__.py
-│   │   └── hyperparameters.py # Model hyperparameters
-│   │
-│   ├── data/                # Data loading and preprocessing
-│   │   ├── loader.py        # Data loading utilities for CMAPSS dataset
-│   │   ├── preprocessor.py  # Data cleaning and preprocessing
-│   │   ├── splitter.py      # Train/test/validation splitting
-│   │   ├── readme.txt       # Data documentation
-│   │   ├── RUL/             # RUL label files
-│   │   ├── test/            # Test dataset files
-│   │   └── train/           # Training dataset files
-│   │
-│   ├── features/            # Feature engineering and selection
-│   │   ├── __init__.py
-│   │   ├── engineering.py   # Domain-specific feature engineering
-│   │   ├── selector.py      # Feature selection techniques
-│   │   ├── statistical.py   # Statistical feature generation
-│   │   └── time_series.py   # Time series feature extraction
-│   │
-│   ├── models/              # Saved trained models
-│   │   └── classification/  # Classification models
-│   │
-│   ├── pipelines/           # Pipeline implementations for each phase
-│   │   ├── __init__.py
-│   │   ├── classification_pipeline.py # Phase 2 pipeline
-│   │   ├── clustering_pipeline.py     # Phase 1 pipeline
-│   │   ├── regression_pipeline.py     # Phase 3 pipeline
-│   │   └── risk_pipeline.py           # Phase 4 pipeline
-│   │
-│   ├── regression/          # Regression model implementation
-│   │   ├── __init__.py
-│   │   ├── base_models.py   # Individual regressor implementations
-│   │   ├── ensemble_regressor.py # Combined regression approach
-│   │   ├── evaluator.py     # Regression evaluation metrics
-│   │   ├── gradient_boosting.py # Gradient boosting implementation
-│   │   └── quantile.py      # Quantile regression for uncertainty
-│   │
-│   ├── results/             # Output results and visualizations
-│   │   ├── classification/  # Classification results
-│   │   ├── clustering/      # Clustering results
-│   │   ├── regression/      # Regression results
-│   │   └── risk/            # Risk assessment results
-│   │
-│   ├── risk/                # Risk assessment implementation
-│   │   ├── __init__.py
-│   │   ├── calibration.py   # Calibration of probability estimates
-│   │   ├── scoring.py       # Risk score computation
-│   │   └── thresholds.py    # Decision thresholds for maintenance
-│   │
-│   ├── utils/               # Utility functions
-│   │   ├── __init__.py
-│   │   └── clustering_metrics.py # Metrics for evaluating clustering quality
-│   │
-│   ├── visualisation/       # Visualization utilities
-│   │   ├── __init__.py
-│   │   ├── clustering_viz.py # Cluster visualization
-│   │   └── risk_dashboard.py # Risk score dashboard
-│   │
-│   ├── main.py              # Main entry point
-│   ├── requirements.txt     # Package dependencies
-│   └── G_AI096_AI115_ECM025_CSE223_code.ipynb  # Complete workflow notebook
-│
-├── Report/                  # Project report and documentation
-│
-├── LICENSE                  # License file
-├── project_structure.txt    # Project structure documentation
-└── README.md                # This file
-```
 
 ## Innovative Approaches
 
@@ -178,7 +117,7 @@ G_AI096_AI115_ECM025_CSE223/
 The project can be run using the main.py script with the following options:
 
 ```sh
-python3 main.py --phase [0-4] --data_path [path_to_data] --datasets [dataset_ids]
+python3 Code/main.py --phase [0-4] --data_path [path_to_data] --datasets [dataset_ids]
 ```
 
 Where:
@@ -205,6 +144,8 @@ source venv/bin/activate
 # or equivalent code block
 ```
 
-## Contributors
+## Development Notes
 
-Group members' contributions are detailed in the Report/README.md file.
+The project structure details are available in the project_structure.txt file,
+which provides a comprehensive overview of all project components and their
+relationships.
