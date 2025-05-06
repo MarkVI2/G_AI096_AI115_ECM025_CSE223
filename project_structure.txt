@@ -1,95 +1,103 @@
 p3-project/
 │
 ├── Code/
-│   ├── config/
-│   │   ├── __init__.py
-│   │   ├── settings.py               # Global configuration parameters
-│   │   └── hyperparameters.py        # Model hyperparameters
-│   │
-│   ├── data/
-│   │   ├── __init__.py
-│   │   ├── loader.py                 # Data loading utilities for CMAPSS dataset
-│   │   ├── preprocessor.py           # Data cleaning and preprocessing
-│   │   └── splitter.py               # Train/test/validation splitting
-│   │
-│   ├── features/
-│   │   ├── __init__.py
-│   │   ├── time_series.py            # Time series feature extraction
-│   │   ├── statistical.py            # Statistical feature generation
-│   │   ├── engineering.py            # Domain-specific feature engineering
-│   │   └── selector.py               # Feature selection techniques
-│   │
-│   ├── clustering/
-│   │   ├── __init__.py
-│   │   ├── dbscan.py                 # DBSCAN implementation
-│   │   ├── spectral.py               # Spectral clustering implementation
-│   │   ├── ensemble.py               # Ensemble clustering methods
-│   │   └── stage_mapper.py           # Maps clusters to degradation stages
+│   ├── cache/
+│   │   └── classification/      # Cached classification model outputs
+│   │       └── joblib/          # Serialized models and data
 │   │
 │   ├── classification/
 │   │   ├── __init__.py
-│   │   ├── base_models.py            # Individual classifier implementations
-│   │   ├── meta_classifier.py        # Stacking/ensemble classifier
-│   │   ├── online_learning.py        # Incremental learning components
-│   │   └── evaluator.py              # Classification metrics and evaluation
+│   │   ├── base_model.py        # Base classifier implementation 
+│   │   ├── evaluator.py         # Classification performance evaluation
+│   │   └── smote.py             # SMOTE implementation for imbalanced data
 │   │
-│   ├── regression/
+│   ├── clustering/
 │   │   ├── __init__.py
-│   │   ├── base_models.py            # Individual regressor implementations
-│   │   ├── ensemble_regressor.py     # Combined regression approach
-│   │   ├── quantile.py               # Quantile regression for uncertainty
-│   │   └── evaluator.py              # Regression metrics and evaluation
+│   │   ├── hierarchical.py      # Hierarchical Agglomerative Clustering
+│   │   └── visualization.py     # Cluster visualization utilities
 │   │
-│   ├── risk/
+│   ├── config/
 │   │   ├── __init__.py
-│   │   ├── scoring.py                # Risk score computation
-│   │   ├── thresholds.py             # Decision thresholds for maintenance
-│   │   └── calibration.py            # Calibration of probability estimates
+│   │   └── hyperparameters.py   # Model hyperparameters configuration
 │   │
-│   ├── visualization/
-│   │   ├── __init__.py
-│   │   ├── clusters.py               # Cluster visualization with PCA/t-SNE
-│   │   ├── degradation.py            # Degradation stage visualization
-│   │   ├── predictions.py            # Model prediction visualizations
-│   │   └── risk_dashboard.py         # Risk score dashboard/plots
+│   ├── data/
+│   │   ├── loader.py            # Data loading utilities for CMAPSS dataset
+│   │   ├── preprocessor.py      # Data cleaning and preprocessing
+│   │   ├── splitter.py          # Train/test/validation splitting
+│   │   ├── readme.txt           # Data documentation
+│   │   ├── cache/               # Cached preprocessed data
+│   │   ├── RUL/                 # RUL label files
+│   │   ├── test/                # Test dataset files
+│   │   └── train/               # Training dataset files
 │   │
-│   ├── utils/
+│   ├── features/
 │   │   ├── __init__.py
-│   │   ├── metrics.py                # Custom evaluation metrics
-│   │   ├── validators.py             # Input validation utilities
-│   │   └── logger.py                 # Logging configuration
+│   │   ├── engineering.py       # Domain-specific feature engineering
+│   │   ├── selector.py          # Feature selection techniques
+│   │   ├── statistical.py       # Statistical feature generation
+│   │   └── time_series.py       # Time series feature extraction
+│   │
+│   ├── models/
+│   │   └── classification/      # Saved trained classification models
 │   │
 │   ├── pipelines/
 │   │   ├── __init__.py
-│   │   ├── clustering_pipeline.py    # Phase 1 pipeline
-│   │   ├── classification_pipeline.py # Phase 2 pipeline: trains XGBoost based meta-classifier using cluster labels
-│   │   ├── regression_pipeline.py    # Phase 3 pipeline
-│   │   └── risk_pipeline.py          # Phase 4 pipeline
+│   │   ├── classification_pipeline.py  # Phase 2: Classification pipeline
+│   │   ├── clustering_pipeline.py      # Phase 1: Clustering pipeline 
+│   │   ├── regression_pipeline.py      # Phase 3: Regression pipeline
+│   │   └── risk_pipeline.py            # Phase 4: Risk assessment pipeline
 │   │
-│   ├── main.py                       # Main entry point
-│   ├── requirements.txt              # Package dependencies
-│   └── GroupNumber_code.ipynb        # Complete workflow notebook
+│   ├── regression/
+│   │   ├── __init__.py
+│   │   ├── base_models.py       # Individual regressor implementations
+│   │   ├── ensemble_regressor.py # Combined regression approach
+│   │   ├── evaluator.py         # Regression metrics and evaluation
+│   │   ├── gradient_boosting.py # Gradient boosting implementation
+│   │   └── quantile.py          # Quantile regression for uncertainty
+│   │
+│   ├── results/
+│   │   ├── classification/      # Classification results and metrics
+│   │   ├── clustering/          # Clustering results and visualizations
+│   │   ├── regression/          # Regression model results
+│   │   └── risk/                # Risk assessment outputs
+│   │
+│   ├── risk/
+│   │   ├── __init__.py
+│   │   ├── calibration.py       # Calibration of probability estimates
+│   │   ├── scoring.py           # Risk score computation
+│   │   └── thresholds.py        # Decision thresholds for maintenance
+│   │
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   └── clustering_metrics.py # Metrics for evaluating clustering quality
+│   │
+│   ├── visualisation/
+│   │   ├── __init__.py
+│   │   ├── clustering_viz.py    # Cluster visualization functions
+│   │   └── risk_dashboard.py    # Risk score dashboard visualization
+│   │
+│   ├── main.py                  # Main entry point
+│   ├── requirements.txt         # Package dependencies
+│   └── G_AI096_AI115_ECM025_CSE223_code.ipynb # Complete workflow notebook
 │
-├── Report/
-│   ├── GroupNumber_report.pdf
-│   ├── GroupNumber_report_source.docx
-│   └── README.md                     # Contribution breakdown
+├── Report/                      # Project report and documentation
 │
-├── README.md                         # Project overview
-└── .gitignore                        # Git ignore file
+├── LICENSE                      # License file
+├── project_structure.txt        # This file
+└── README.md                    # Project overview
 
 
 Data Flow:
 data/loader → data/preprocessor → data/splitter → features/* → models
 
-Clustering Pipeline:
-pipelines/clustering_pipeline → clustering/dbscan + clustering/spectral → clustering/ensemble → clustering/stage_mapper
+Clustering Pipeline (Phase 1):
+pipelines/clustering_pipeline → clustering/hierarchical → visualisation/clustering_viz → utils/clustering_metrics
 
-Classification Pipeline:
-pipelines/classification_pipeline → classification/base_models → classification/meta_classifier → classification/evaluator
+Classification Pipeline (Phase 2):
+pipelines/classification_pipeline → classification/base_model → classification/smote → classification/evaluator
 
-Regression Pipeline:
+Regression Pipeline (Phase 3):
 pipelines/regression_pipeline → regression/base_models → regression/ensemble_regressor → regression/evaluator
 
-Risk Assessment Pipeline:
-pipelines/risk_pipeline → risk/scoring → risk/thresholds → visualization/risk_dashboard
+Risk Assessment Pipeline (Phase 4):
+pipelines/risk_pipeline → risk/scoring → risk/thresholds → visualisation/risk_dashboard

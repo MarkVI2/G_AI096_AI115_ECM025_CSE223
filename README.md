@@ -17,7 +17,7 @@ The implementation is divided into four distinct phases:
 ### Phase 1: Clustering for Multi-Stage Failure Labeling
 
 - Uses raw sensor data from the CMAPSS dataset (not using standard RUL labels)
-- Implements a Heirarchial Agglomerative Clustering
+- Implements a Hierarchical Agglomerative Clustering
 - Visualizes clusters using PCA or t-SNE for validation
 - Derives 5 degradation stages:
   - Stage 0: Normal
@@ -43,6 +43,7 @@ The implementation is divided into four distinct phases:
   - Random Forest Regressor
   - Ridge Regression
   - Support Vector Regression (SVR)
+  - Gradient Boosting Regressor
 - Provides quantile-based uncertainty estimates
 
 ### Phase 4: Risk Score Computation and Decision Logic
@@ -53,127 +54,139 @@ The implementation is divided into four distinct phases:
 - Uses regression output for estimated time left until failure
 - Creates a normalized risk score for maintenance decision-making
 
-## Project Structure
+## Current Project Structure
 
 ```
 G_AI096_AI115_ECM025_CSE223/
 │
 ├── Code/
-│   ├── config/
+│   ├── cache/               # Cached model outputs and intermediate results
+│   │   └── classification/  # Classification model cache
+│   │
+│   ├── classification/      # Classification model implementation
 │   │   ├── __init__.py
-│   │   ├── settings.py               # Global configuration parameters
-│   │   └── hyperparameters.py        # Model hyperparameters
+│   │   ├── base_model.py    # Base classifier implementation
+│   │   ├── evaluator.py     # Classification evaluation metrics
+│   │   └── smote.py         # SMOTE implementation for handling imbalanced data
 │   │
-│   ├── data/
-│   │   ├── loader.py                 # Data loading utilities for CMAPSS dataset
-│   │   ├── preprocessor.py           # Data cleaning and preprocessing
-│   │   ├── splitter.py               # Train/test/validation splitting
-│   │   ├── RUL/                      # RUL label files
-│   │   ├── test/                     # Test dataset files
-│   │   └── train/                    # Training dataset files
-│   │
-│   ├── features/
+│   ├── clustering/          # Clustering implementation
 │   │   ├── __init__.py
-│   │   ├── time_series.py            # Time series feature extraction
-│   │   ├── statistical.py            # Statistical feature generation
-│   │   ├── engineering.py            # Domain-specific feature engineering
-│   │   └── selector.py               # Feature selection techniques
+│   │   ├── hierarchical.py  # Hierarchical Agglomerative Clustering
+│   │   └── visualization.py # Cluster visualization utilities
 │   │
-│   ├── clustering/
+│   ├── config/              # Configuration parameters
 │   │   ├── __init__.py
-│   │   ├── dbscan.py                 # DBSCAN implementation
-│   │   ├── spectral.py               # Spectral clustering implementation
-│   │   ├── ensemble.py               # Ensemble clustering methods
-│   │   └── stage_mapper.py           # Maps clusters to degradation stages
+│   │   └── hyperparameters.py # Model hyperparameters
 │   │
-│   ├── classification/
+│   ├── data/                # Data loading and preprocessing
+│   │   ├── loader.py        # Data loading utilities for CMAPSS dataset
+│   │   ├── preprocessor.py  # Data cleaning and preprocessing
+│   │   ├── splitter.py      # Train/test/validation splitting
+│   │   ├── readme.txt       # Data documentation
+│   │   ├── RUL/             # RUL label files
+│   │   ├── test/            # Test dataset files
+│   │   └── train/           # Training dataset files
+│   │
+│   ├── features/            # Feature engineering and selection
 │   │   ├── __init__.py
-│   │   ├── base_model.py             # Individual classifier implementations
-│   │   ├── meta_classifier.py        # Stacking/ensemble classifier
-│   │   ├── online_learning.py        # Incremental learning components
-│   │   └── evaluator.py              # Classification metrics and evaluation
+│   │   ├── engineering.py   # Domain-specific feature engineering
+│   │   ├── selector.py      # Feature selection techniques
+│   │   ├── statistical.py   # Statistical feature generation
+│   │   └── time_series.py   # Time series feature extraction
 │   │
-│   ├── regression/
+│   ├── models/              # Saved trained models
+│   │   └── classification/  # Classification models
+│   │
+│   ├── pipelines/           # Pipeline implementations for each phase
 │   │   ├── __init__.py
-│   │   ├── base_models.py            # Individual regressor implementations
-│   │   ├── ensemble_regressor.py     # Combined regression approach
-│   │   ├── quantile.py               # Quantile regression for uncertainty
-│   │   └── evaluator.py              # Regression metrics and evaluation
-│   │
-│   ├── risk/
-│   │   ├── calibration.py            # Calibration of probability estimates
-│   │   ├── scoring.py                # Risk score computation
-│   │   └── thresholds.py             # Decision thresholds for maintenance
-│   │
-│   ├── visualisation/
-│   │   ├── __init__.py
-│   │   ├── clusters.py               # Cluster visualization with PCA/t-SNE
-│   │   ├── degradation.py            # Degradation stage visualization
-│   │   ├── predictions.py            # Model prediction visualizations
-│   │   └── risk_dashboard.py         # Risk score dashboard/plots
-│   │
-│   ├── utils/
-│   │   ├── __init__.py
-│   │   ├── logger.py                 # Logging configuration
-│   │   ├── metrics.py                # Custom evaluation metrics
-│   │   └── validators.py             # Input validation utilities
-│   │
-│   ├── pipelines/
-│   │   ├── __init__.py
-│   │   ├── clustering_pipeline.py    # Phase 1 pipeline
 │   │   ├── classification_pipeline.py # Phase 2 pipeline
-│   │   ├── regression_pipeline.py    # Phase 3 pipeline
-│   │   └── risk_pipeline.py          # Phase 4 pipeline
+│   │   ├── clustering_pipeline.py     # Phase 1 pipeline
+│   │   ├── regression_pipeline.py     # Phase 3 pipeline
+│   │   └── risk_pipeline.py           # Phase 4 pipeline
 │   │
-│   ├── main.py                       # Main entry point
-│   ├── requirements.txt              # Package dependencies
+│   ├── regression/          # Regression model implementation
+│   │   ├── __init__.py
+│   │   ├── base_models.py   # Individual regressor implementations
+│   │   ├── ensemble_regressor.py # Combined regression approach
+│   │   ├── evaluator.py     # Regression evaluation metrics
+│   │   ├── gradient_boosting.py # Gradient boosting implementation
+│   │   └── quantile.py      # Quantile regression for uncertainty
+│   │
+│   ├── results/             # Output results and visualizations
+│   │   ├── classification/  # Classification results
+│   │   ├── clustering/      # Clustering results
+│   │   ├── regression/      # Regression results
+│   │   └── risk/            # Risk assessment results
+│   │
+│   ├── risk/                # Risk assessment implementation
+│   │   ├── __init__.py
+│   │   ├── calibration.py   # Calibration of probability estimates
+│   │   ├── scoring.py       # Risk score computation
+│   │   └── thresholds.py    # Decision thresholds for maintenance
+│   │
+│   ├── utils/               # Utility functions
+│   │   ├── __init__.py
+│   │   └── clustering_metrics.py # Metrics for evaluating clustering quality
+│   │
+│   ├── visualisation/       # Visualization utilities
+│   │   ├── __init__.py
+│   │   ├── clustering_viz.py # Cluster visualization
+│   │   └── risk_dashboard.py # Risk score dashboard
+│   │
+│   ├── main.py              # Main entry point
+│   ├── requirements.txt     # Package dependencies
 │   └── G_AI096_AI115_ECM025_CSE223_code.ipynb  # Complete workflow notebook
 │
-└── Report/                          # Project report and documentation
+├── Report/                  # Project report and documentation
+│
+├── LICENSE                  # License file
+├── project_structure.txt    # Project structure documentation
+└── README.md                # This file
 ```
 
 ## Innovative Approaches
 
 ### Phase 1: Clustering Innovations
 
-- **Hybrid Clustering Approach**: Combines DBSCAN for noise detection with
-  Spectral Clustering for refined stage identification
-- **Time-Series Feature Extraction**: Applies change-point detection and
-  extracts statistical features that capture degradation patterns
-- **Sensor Importance Weighting**: Uses SHAP or permutation importance to weight
-  sensors based on their relevance to failure patterns
+- **Hierarchical Agglomerative Clustering**: Uses Ward linkage method to create
+  well-defined degradation stages
+- **Advanced Feature Weighting**: Applies variance-based weights to features to
+  highlight important degradation patterns
+- **Cross-Validation Framework**: Implements k-fold cross-validation with
+  comprehensive quality metrics
 
 ### Phase 2: Classification Innovations
 
-- **Meta-Classification Framework**: Trains multiple diverse classifiers and
-  uses stacking to combine their predictions
-- **Online Learning Component**: Implements incremental learning for XGBoost to
-  adapt to new patterns
-- **Custom Feature Transformations**: Creates interaction features between
-  sensors and applies non-linear transformations
+- **Base Classification Framework**: Focuses on robust implementation with
+  proper handling of imbalanced data
+- **SMOTE Implementation**: Uses Synthetic Minority Over-sampling Technique for
+  handling class imbalance
+- **Comprehensive Evaluation**: Detailed evaluation metrics for classification
+  performance
 
 ### Phase 3: Regression Innovations
 
-- **Multi-Target Regression**: Predicts time to each future stage, not just the
-  next stage
-- **Two-Stage Regression**: First model predicts if failure will happen within a
-  threshold time, second predicts exact time
-- **Domain-Adaptive Regression**: Customizes regression models for different
-  operational conditions
+- **Ensemble Regression Approach**: Combines multiple regression models for
+  improved stability and accuracy
+- **Gradient Boosting Regression**: Specialized implementation for handling
+  time-series data
+- **Quantile Regression**: Provides uncertainty bounds for remaining useful life
+  predictions
 
 ## Running the Project
 
 The project can be run using the main.py script with the following options:
 
 ```sh
-python3 main.py --phase [0-4] --data_path [path_to_data]
+python3 main.py --phase [0-4] --data_path [path_to_data] --datasets [dataset_ids]
 ```
 
 Where:
 
 - `--phase`: Pipeline phase to run (0=all, 1=clustering, 2=classification,
   3=regression, 4=risk)
-- `--data_path`: Path to CMAPSS dataset
+- `--data_path`: Path to CMAPSS dataset (default: ./Code/data/)
+- `--datasets`: Comma-separated list of datasets to process (e.g., FD001,FD003)
 
 ## Dependencies
 
