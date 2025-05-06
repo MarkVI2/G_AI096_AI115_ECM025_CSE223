@@ -172,6 +172,3 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-Code/results/classification/FD002/random_forest/train_with_preds.csv
-Code/results/classification/FD003/random_forest/train_with_preds.csv
-Code/results/classification/FD004/random_forest/train_with_preds.csv
