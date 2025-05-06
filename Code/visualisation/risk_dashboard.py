@@ -1,11 +1,10 @@
 import os
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.gridspec as gridspec
-from typing import List, Dict, Optional, Union, Tuple
+from typing import Dict
 
 class RiskDashboard:
     """
