@@ -443,3 +443,41 @@ if __name__ == "__main__":
     results = pipeline.run_pipeline()
     
     print("\nRisk analysis pipeline completed successfully!")
+
+def run_risk_assessment(classification_results=None, regression_results=None, data_path=None, 
+                        n_jobs=None, risk_method='urgency', high_threshold=0.7, medium_threshold=0.4):
+    """
+    Run the risk assessment pipeline and return the results.
+    
+    Args:
+        classification_results: Results from the classification pipeline
+        regression_results: Results from the regression pipeline
+        data_path: Path to the data directory
+        n_jobs: Number of parallel jobs to run
+        risk_method: Method for computing risk ('minmax', 'urgency', or 'calibration')
+        high_threshold: Threshold for high risk alerts
+        medium_threshold: Threshold for medium risk alerts
+        
+    Returns:
+        Dictionary containing risk assessment results
+    """
+    # Setup datasets based on regression results if provided
+    if regression_results:
+        datasets = list(regression_results.keys())
+    else:
+        datasets = ['FD001', 'FD003']  # Default datasets
+        
+    # Initialize and run pipeline
+    pipeline = RiskPipeline(
+        datasets=datasets,
+        base_path=data_path,
+        n_jobs=n_jobs,
+        risk_method=risk_method,
+        high_risk_threshold=high_threshold,
+        medium_risk_threshold=medium_threshold
+    )
+    
+    # Run the pipeline
+    results = pipeline.run_pipeline()
+    
+    return results

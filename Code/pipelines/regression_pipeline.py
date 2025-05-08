@@ -364,3 +364,32 @@ if __name__ == "__main__":
     # Run the pipeline
     pipeline = RegressionPipeline()
     pipeline.run_pipeline()
+
+def run_regression(data_path=None, classification_results=None, n_jobs=None):
+    """
+    Run the regression pipeline and return the results.
+    
+    Args:
+        data_path: Path to the data directory
+        classification_results: Results from the classification pipeline
+        n_jobs: Number of parallel jobs to run
+        
+    Returns:
+        Dictionary containing regression results
+    """
+    # Setup datasets based on classification results if provided
+    if classification_results:
+        datasets = list(classification_results.keys())
+    else:
+        datasets = ['FD001', 'FD003']  # Default datasets
+        
+    # Initialize and run pipeline
+    pipeline = RegressionPipeline(
+        datasets=datasets,
+        base_path=data_path,
+        n_jobs=n_jobs
+    )
+    pipeline.run_pipeline()
+    
+    # Return metrics as results
+    return pipeline.metrics

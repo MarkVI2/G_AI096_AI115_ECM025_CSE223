@@ -23,6 +23,8 @@ def main():
                         help='Path to CMAPSS dataset')
     parser.add_argument('--datasets', type=str, default="FD001,FD003",
                         help='Comma-separated list of datasets to process (e.g., FD001,FD003)')
+    parser.add_argument('--n_jobs', type=int, default=None,
+                        help='Number of parallel jobs to run (default: CPU count - 1)')
     args = parser.parse_args()
     
     # Configure parallel processing settings
