@@ -12,13 +12,13 @@ monitoring and failure prediction system.
 
 ## Project Contributions
 
-- **Atharv Ashish Garg (SE23UCSE223)** - 40%
+- **Atharv Ashish Garg (SE23UCSE223)** - 70%
 
-- **Shrivatsh Kuppu Subramaniam (SE23UARI115)** - 20%
+- **Shrivatsh Kuppu Subramaniam (SE23UARI115)** - 10%
 
-- **Pranav Dubey (SE23UARI096)** - 20%
+- **Pranav Dubey (SE23UARI096)** - 10%
 
-- **Janaki Beeram Reddy (SE23UECM025)** - 20%
+- **Janaki Beeram Reddy (SE23UECM025)** - 10%
 
 ## Implementation Plan
 
